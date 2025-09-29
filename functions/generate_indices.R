@@ -101,6 +101,9 @@ meta_strata <- meta_strata %>%
   # Calculate strata/year-level observation statistics
   obs_strata <- raw_data_sel %>%
     dplyr::select("stratum", "year", "first_year", "count") %>%
+    dplyr::group_by(.data$stratum) %>%
+    tidyr::complete(year = seq(.env$start_year, .env$end_year),
+                    .data$first_year) %>%
     dplyr::arrange(.data$stratum, .data$year, .data$count) %>%
     dplyr::group_by(.data$stratum, .data$year, .data$first_year) %>%
     dplyr::summarize(obs_mean = mean(.data$count, na.rm = TRUE),
@@ -154,6 +157,7 @@ meta_strata <- meta_strata %>%
     
     # Mark strata included/excluded
     obs_region <- obs_region %>%
+      dplyr::ungroup() %>% 
       dplyr::group_by(.data[[rr]], .data$year) %>%
       dplyr::mutate(
         strata_included = paste0(.data$strata_name[!.data$flag_remove],

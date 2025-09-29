@@ -10,7 +10,11 @@ re_ebird <- TRUE
 re_fit <- TRUE
 
 
-source("functions/neighbours_define.R")
+source("functions/checks.R")
+source("functions/generate_trends.R")
+source("functions/generate_indices.R")
+source("functions/utils.R")
+
 output_dir <- "output/"
 # The code is here: https://github.com/BirdsCanada/National_NOS_Clean
 # 
@@ -723,5 +727,29 @@ trends <- generate_trends(indices,
 
 
 tt <- trends$trends
+
+
+map_strat_trends <- strata_used %>% 
+  inner_join(tt,
+            by = c("strata_name" = "region"))
+
+t_map <- ggplot()+
+  geom_sf(data = map_strat_trends,
+          aes(fill = trend))+
+  #scale_fill_viridis_c()+
+  colorspace::scale_fill_continuous_diverging(rev = TRUE,
+                                              palette = "Blue-Red 3")
+
+
+t_map
+
+
+a_map <- ggplot()+
+  geom_sf(data = map_strat_trends,
+          aes(fill = rel_abundance))+
+  scale_fill_viridis_c()
+
+
+a_map
 
 
