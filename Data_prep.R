@@ -1126,7 +1126,7 @@ survey_sites <- df_full %>%
                          "BBS",
                          "Nocturnal Owl Survey"),
          Survey = factor(Survey,
-                         levels = c("BBS","Nocturnal Owl Survey"),
+                         levels = rev(c("BBS","Nocturnal Owl Survey")),
                          ordered = TRUE)) %>% 
   select(route_id,Survey,longitude,latitude) %>% 
   distinct() %>% 
@@ -1148,7 +1148,7 @@ t_map <- ggplot()+
   coord_sf(xlim = bb[c("xmin","xmax")],
            ylim = bb[c("ymin","ymax")])+
   #scale_fill_viridis_c()+
-  scale_colour_viridis_d(direction = -1,
+  scale_colour_viridis_d(direction = 1,
                          name = "Survey",
                          end = 0.5)+
   # scico::scale_fill_scico_d(direction = -1,
@@ -1201,7 +1201,7 @@ t_map <- ggplot()+
                           "BBS",
                           "Nocturnal Owl Survey"),
           Survey = factor(Survey,
-                          levels = c("BBS","Nocturnal Owl Survey"),
+                          levels = rev(c("BBS","Nocturnal Owl Survey")),
                           ordered = TRUE)) %>% 
    select(route_id,Survey,longitude,latitude) %>% 
    distinct() %>% 
@@ -1223,7 +1223,7 @@ t_map <- ggplot()+
    coord_sf(xlim = bb[c("xmin","xmax")],
             ylim = bb[c("ymin","ymax")])+
    #scale_fill_viridis_c()+
-   scale_colour_viridis_d(direction = -1,
+   scale_colour_viridis_d(direction = 1,
                           name = "Survey",
                           end = 0.7)+
    # scico::scale_fill_scico_d(direction = -1,
