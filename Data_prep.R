@@ -923,7 +923,22 @@ pdf(paste0("figures/temp_fit_summary_",sp_ebird,".pdf"),
 
 
 
+
 # explore results ---------------------------------------------------------
+breaks <- c(-7, -4, -2, -1, -0.5, 0.5, 1, 2, 4, 7)
+labls <- c(paste0("< ", breaks[1]), paste0(breaks[-c(length(breaks))], 
+                                           ":", breaks[-c(1)]), paste0("> ", breaks[length(breaks)]))
+labls <- paste0(labls, " %")
+
+
+pal <- stats::setNames(c("#a50026", "#d73027", "#f46d43", 
+                         "#fdae61", "#fee090", "#ffffbf", "#e0f3f8", "#abd9e9", 
+                         "#74add1", "#4575b4", "#313695"), labls)
+
+
+# pal <- stats::setNames(scico(11, palette = "roma"),
+#                        labls)
+# 
 
 
 provs <- bbsBayes2::load_map("prov_state") %>% 
@@ -995,7 +1010,9 @@ tt <- trends$trends %>%
 tt_all <- bind_rows(tt_all,tt)
 }
 
-
+tt_all <- tt_all %>% 
+  mutate(trends = cut(trend, breaks = c(-Inf, 
+                              breaks, Inf), labels = labls))
 
 map_strat_trends <- strata_used %>% 
   inner_join(tt_all,
@@ -1003,10 +1020,15 @@ map_strat_trends <- strata_used %>%
 
 t_map <- ggplot()+
   geom_sf(data = map_strat_trends,
-          aes(fill = trend))+
+          aes(fill = trends))+
   #scale_fill_viridis_c()+
-  colorspace::scale_fill_continuous_diverging(rev = TRUE,
-                                              palette = "Blue-Red 3")+
+  # scico::scale_fill_scico_d(direction = -1,
+  #                           palette = "roma",
+  #                           name = "Trend %/year")+
+  scale_fill_manual(values = pal, 
+                    na.value = "white",
+                    name = "Trend %/year")+
+  theme_bw()+
   facet_wrap(vars(trend_period))
 
 
@@ -1041,7 +1063,9 @@ for(i in 1:nrow(yrs)){
   tt_all <- bind_rows(tt_all,tt)
 }
 
-
+tt_all <- tt_all %>% 
+  mutate(trends = cut(trend, breaks = c(-Inf, 
+                                        breaks, Inf), labels = labls))
 
 map_strat_trends <- strata_used %>% 
   inner_join(tt_all,
@@ -1049,10 +1073,15 @@ map_strat_trends <- strata_used %>%
 
 t_map <- ggplot()+
   geom_sf(data = map_strat_trends,
-          aes(fill = trend))+
+          aes(fill = trends))+
   #scale_fill_viridis_c()+
-  colorspace::scale_fill_continuous_diverging(rev = TRUE,
-                                              palette = "Blue-Red 3")+
+  # scico::scale_fill_scico_d(direction = -1,
+  #                           palette = "roma",
+  #                           name = "Trend %/year")+
+  scale_fill_manual(values = pal, 
+                    na.value = "white",
+                    name = "Trend %/year")+
+  theme_bw()+
   facet_wrap(vars(trend_period))
 
 
@@ -1073,6 +1102,10 @@ trends <- generate_trends(indices,
 
 tt <- trends$trends
 
+tt <- tt %>% 
+  mutate(trends = cut(trend, breaks = c(-Inf, 
+                                        breaks, Inf), labels = labls))
+
 country <- rnaturalearth::ne_countries(continent = "North America") %>%
   filter(admin %in% c("Canada")) %>%
   sf::st_transform(crs = sf::st_crs(stratum)) %>%
@@ -1091,7 +1124,10 @@ bb <- st_bbox(map_strat_trends)
 survey_sites <- df_full %>% 
   mutate(Survey = ifelse(dataset == "bbs",
                          "BBS",
-                         "Nocturnal Owl Survey")) %>% 
+                         "Nocturnal Owl Survey"),
+         Survey = factor(Survey,
+                         levels = c("BBS","Nocturnal Owl Survey"),
+                         ordered = TRUE)) %>% 
   select(route_id,Survey,longitude,latitude) %>% 
   distinct() %>% 
   st_as_sf(coords = c("longitude","latitude"),
@@ -1102,11 +1138,11 @@ t_map <- ggplot()+
   geom_sf(data = provs,
           fill = NA)+
   geom_sf(data = map_strat_trends,
-          aes(fill = trend))+
+          aes(fill = trends))+
   geom_sf(data = survey_sites,
           aes(colour = Survey),
           inherit.aes = FALSE,
-          size = 0.03)+
+          size = 0.05)+
   labs(title = paste(sp,"Trends across Canada, 1995-2024"),
        caption = paste("Population trends from an integrated analysis of Nocturnal Owl Monitoring data and BBS"))+
   coord_sf(xlim = bb[c("xmin","xmax")],
@@ -1114,11 +1150,13 @@ t_map <- ggplot()+
   #scale_fill_viridis_c()+
   scale_colour_viridis_d(direction = -1,
                          name = "Survey",
-                         end = 0.99)+
-  colorspace::scale_fill_binned_diverging(rev = TRUE,
-                                              palette = "Blue-Red 3",
-                                              name = "Trend %/year",
-                                          breaks = c(-Inf,-5,-2,-1,-0.5,0.5,1,2,5,Inf))+
+                         end = 0.5)+
+  # scico::scale_fill_scico_d(direction = -1,
+  #                           palette = "roma",
+  #                           name = "Trend %/year")+
+  scale_fill_manual(values = pal, 
+                    na.value = "white",
+                    name = "Trend %/year")+
   theme_bw()
 
 
@@ -1127,6 +1165,80 @@ t_map <- ggplot()+
  print(t_map)
 # dev.off()
 
+ 
+ 
+ 
+ trends <- generate_trends(indices,
+                            min_year = 2010,
+                           # max_year = 2022,
+                           quantiles = c(0.025, 0.05, 0.25, 0.75, 0.95, 0.975),
+                           slope = FALSE,
+                           gam = FALSE,
+                           prob_decrease = NULL,
+                           prob_increase = NULL,
+                           hpdi = FALSE)
+ 
+ 
+ tt <- trends$trends
+ 
+ tt <- tt %>% 
+   mutate(trends = cut(trend, breaks = c(-Inf, 
+                                         breaks, Inf), labels = labls))
+ 
+ 
+ 
+ map_strat_trends <- strata_used %>% 
+   sf::st_intersection(country) %>% 
+   inner_join(tt,
+              by = c("strata_name" = "region"))
+ 
+ 
+ bb <- st_bbox(map_strat_trends)
+ 
+ 
+ survey_sites <- df_full %>% 
+   mutate(Survey = ifelse(dataset == "bbs",
+                          "BBS",
+                          "Nocturnal Owl Survey"),
+          Survey = factor(Survey,
+                          levels = c("BBS","Nocturnal Owl Survey"),
+                          ordered = TRUE)) %>% 
+   select(route_id,Survey,longitude,latitude) %>% 
+   distinct() %>% 
+   st_as_sf(coords = c("longitude","latitude"),
+            crs = 4326)
+ 
+ 
+ t_map <- ggplot()+
+   geom_sf(data = provs,
+           fill = NA)+
+   geom_sf(data = map_strat_trends,
+           aes(fill = trends))+
+   geom_sf(data = survey_sites,
+           aes(colour = Survey),
+           inherit.aes = FALSE,
+           size = 0.05)+
+   labs(title = paste(sp,"Trends across Canada, 2010-2024"),
+        caption = paste("Population trends from an integrated analysis of Nocturnal Owl Monitoring data and BBS"))+
+   coord_sf(xlim = bb[c("xmin","xmax")],
+            ylim = bb[c("ymin","ymax")])+
+   #scale_fill_viridis_c()+
+   scale_colour_viridis_d(direction = -1,
+                          name = "Survey",
+                          end = 0.7)+
+   # scico::scale_fill_scico_d(direction = -1,
+   #                           palette = "roma",
+   #                           name = "Trend %/year")+
+   scale_fill_manual(values = pal, 
+                     na.value = "white",
+                     name = "Trend %/year")+
+   theme_bw()
+ 
+ 
+ 
+ # pdf("temp.pdf")
+ print(t_map)
+ 
 # ch_map <- ggplot()+
 #   geom_sf(data = map_strat_trends,
 #           aes(fill = percent_change))+
