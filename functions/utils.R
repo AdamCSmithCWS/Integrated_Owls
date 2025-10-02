@@ -23,7 +23,7 @@ interval_function_hpdi <- function(x,probs, names = TRUE){
       }
       y[j] <- HDInterval::hdi(x,q2)[i]
     }else{
-      y[j] <- stats::quantile(x,prob)
+      y[j] <- stats::quantile(x,prob,na.rm = TRUE)
     }
   }
   return(y)

@@ -4,9 +4,10 @@ library(tidyverse)
 library(cmdstanr)
 library(sf)
 library(ebirdst)
+library(SurveyCoverage)
 
 use_uncertainty <- FALSE
-re_ebird <- TRUE
+re_ebird <- FALSE
 re_fit <- TRUE
 
 
@@ -14,6 +15,7 @@ source("functions/checks.R")
 source("functions/generate_trends.R")
 source("functions/generate_indices.R")
 source("functions/utils.R")
+source("functions/neighbours_define.R")
 
 output_dir <- "output/"
 # The code is here: https://github.com/BirdsCanada/National_NOS_Clean
@@ -92,8 +94,18 @@ tst_map <- ggplot()+
 
 tst_map
 
+tst_map <- ggplot()+
+  geom_sf(data = event_map,
+          aes(colour = min_year))+
+  scale_colour_viridis_c()
 
+tst_map
 
+progr_summary <- events_owl %>% 
+  group_by(collection,protocol_id) %>% 
+  summarise(first_year = min(survey_year),
+            latest_year = max(survey_year),
+            n_total = n())
 
 # owl observations --------------------------------------------------------
 
@@ -125,9 +137,47 @@ obs_owl <- read_csv("data/owls/NationalOwlData.csv") %>%
 full_bbs <- bbsBayes2::load_bbs_data()
 
 
-#for(sp in c("Great Horned Owl")){
+
+# regional maps for coverage calculations ---------------------------------
+
+
+
+# load maps of regions ----------------------------------------------------
+
+
+stratum <- load_map("bbs_cws")
+
+prov_state <- load_map("prov_state")  %>% 
+  filter(country_code == "CA")%>%
+  group_by(prov_state) %>%
+  summarise() %>%
+  mutate(strata_name = prov_state)
+
+
+bcr_by_country <- load_map("bbs_cws") %>%
+  filter(country_code == "CA")%>%
+  group_by(bcr_by_country) %>%
+  summarise() %>%
+  rename(strata_name = bcr_by_country)
+
+country <- rnaturalearth::ne_countries(continent = "North America") %>%
+  filter(admin %in% c("Canada")) %>%
+  sf::st_transform(crs = sf::st_crs(stratum)) %>%
+  rename(strata_name = admin) %>%
+  select(strata_name)
+
+regs_maps <- list(country = country,
+                  prov_state = prov_state,
+                  stratum = stratum,
+                  bcr_by_country = bcr_by_country)
+
+
+# Species loop ------------------------------------------------------------
+
+
+for(sp in c("Great Horned Owl","Barred Owl","Northern Saw-whet Owl","Boreal Owl")){
   
-  sp <- "Great Horned Owl"
+ #sp <- "Great Horned Owl"
   
   sp_obs_owl <- obs_owl %>% 
     filter(CommonName == sp) 
@@ -279,7 +329,16 @@ strata_map <- bbsBayes2::load_map("latlong") %>%
 
 route_coords <- df_full %>% 
   select(route_id,longitude,latitude) %>% 
-  distinct() %>% 
+  distinct() 
+
+if(length(unique(route_coords$route_id)) != nrow(route_coords)){
+  warning("Some routes have more than 1 set of coordinates")
+  route_coords <- route_coords %>% 
+    arrange(route_id) %>% 
+    group_by(route_id) %>% 
+    sample_n(1)
+}
+ route_coords <- route_coords %>% 
   sf::st_as_sf(., coords = c("longitude","latitude"),
                crs = 4269) %>% # NAD83
   sf::st_transform(crs = sf::st_crs(strata_map))
@@ -298,8 +357,7 @@ route_by_strata <- route_coords %>%
   sf::st_join(strata_map,
               left = TRUE,
               largest = TRUE) %>% 
-  mutate(stratum = as.integer(factor(strata_name))) %>% 
-  filter(!is.na(stratum))
+  filter(!is.na(strata_name))
 
 ### this currently drops routes that don't fall within a stratum
 ## we could reasonably link all routes to the nearest stratum if we wanted to
@@ -309,7 +367,7 @@ route_by_strata <- route_coords %>%
 tst <- ggplot()+
   geom_sf(data = strata_map)+
   geom_sf(data = route_by_strata,
-          aes(colour = stratum))+
+          aes(colour = strata_name))+
   coord_sf(xlim = route_bb[c("xmin","xmax")],
            ylim = route_bb[c("ymin","ymax")])+
   theme(legend.position = "none")
@@ -338,8 +396,18 @@ strata_span <- df_full %>%
   filter(span >= min_span)
 
 df_full <- df_full %>% 
-  filter(strata_name %in% strata_span$strata_name)
+  filter(strata_name %in% strata_span$strata_name) %>% 
+  mutate(stratum = as.integer(factor(strata_name)))
  
+
+route_strata_join <- df_full %>% 
+  select(stratum,strata_name) %>% 
+  distinct() %>% 
+  arrange(stratum)
+
+
+
+
 meta_years <- df_full %>% 
   select(year,yr) %>% 
   distinct() %>% 
@@ -370,11 +438,14 @@ strata_used <- strata_map %>%
   inner_join(meta_strata,
              by = c("strata_name"))
   
+route_by_strata <- route_by_strata %>% 
+  filter(strata_name %in% df_full$strata_name)
 
 tst <- ggplot()+
   geom_sf(data = strata_used)+
   geom_sf(data = route_by_strata,
-          aes(colour = stratum))
+          aes(colour = strata_name))+
+  theme(legend.position = "none")
 tst
  
 neighbours <- neighbours_define(strata_used,
@@ -414,7 +485,7 @@ if(re_ebird){
   
 
 down <- try(ebirdst::ebirdst_download_status(sp_ebird,
-                                             download_ranges = FALSE,
+                                             download_ranges = TRUE,
                                              download_abundance = TRUE,
                                              download_occurrence = FALSE,
                                              force = FALSE,
@@ -556,19 +627,43 @@ abundance_df <- data.frame(strata_name = strata_used_proj$strata_name,
                            stratum = strata_used_proj$stratum,
                            ebird_abund = abundance_in_strata_used[[1]],
                            ebird_abund_mean = abundance_in_strata_used_mean[[1]],
-                            area_km2 = units::drop_units(sf::st_area(strata_used_proj))/1e6) %>% 
-  arrange(stratum) %>% 
-  mutate(log_mean_rel_abund = log(ebird_abund))#%>%
-#   mutate(
-#     ebird_abund = ifelse(is.na(ebird_abund),min(ebird_abund,na.rm = TRUE),ebird_abund)
-# ) %>%
-#   distinct()
+                            area_100km2 = units::drop_units(sf::st_area(strata_used_proj))/1e8) %>% 
+  arrange(stratum) #
+
+min_abund <- abundance_df %>%
+  filter(ebird_abund > 0) %>% 
+  summarise(min = min(ebird_abund),
+            min_m = min(ebird_abund_mean))
+
+
+abundance_df <- abundance_df %>% 
+  mutate(ebird_abund = ifelse(ebird_abund == 0,
+                              as.numeric(min_abund$min),
+                              ebird_abund),
+         ebird_abund_mean = ifelse(ebird_abund_mean == 0,
+                              as.numeric(min_abund$min_m),
+                              ebird_abund_mean),
+         log_mean_rel_abund = log(ebird_abund/area_100km2))
 
 
 abundance_df_all_strata <- data.frame(strata_name = strata_map_proj$strata_name,
                            ebird_abund = abundance_in_strata[[1]],
                            ebird_abund_mean = abundance_in_strata_mean[[1]],
-                           area_km2 = units::drop_units(sf::st_area(strata_map_proj))/1e6) 
+                           area_100km2 = units::drop_units(sf::st_area(strata_map_proj))/1e8) 
+
+min_abund <- abundance_df_all_strata %>%
+  filter(ebird_abund > 0) %>% 
+  summarise(min = min(ebird_abund),
+            min_m = min(ebird_abund_mean))
+
+abundance_df_all_strata <- abundance_df_all_strata %>% 
+  mutate(ebird_abund = ifelse(ebird_abund == 0,
+                              as.numeric(min_abund$min),
+                              ebird_abund),
+         ebird_abund_mean = ifelse(ebird_abund_mean == 0,
+                                   as.numeric(min_abund$min_m),
+                                   ebird_abund_mean),
+         log_mean_rel_abund = log(ebird_abund/area_100km2))
 
 
 saveRDS(abundance_df,paste0("data/",sp_ebird,"_strata_w_data_level_rel_abund.rds"))
@@ -584,9 +679,23 @@ abundance_df_all_strata <- readRDS(paste0("data/",sp_ebird,"_strata_level_rel_ab
 # df_owl_final
 # df_full
 
+if(nrow(df_bbs_final) > 0){
+train_bbs <- c(1:nrow(df_bbs_final))
+count_bbs <- df_bbs_final$count
+site_bbs <- df_bbs_final$route
+
+year_bbs <- df_bbs_final$yr
+strat_bbs <- df_bbs_final$stratum
+}else{
+  train_bbs <- 1
+  count_bbs <- 1
+  site_bbs <- 1
+  year_bbs <- 1
+  strat_bbs <- 1
+}
 stan_data <- list(n_sites_owl = max(df_owl_final$route),
-                  n_sites_bbs = max(df_bbs_final$route),
-                  n_counts_bbs = nrow(df_bbs_final),
+                  n_sites_bbs = max(1,max(df_bbs_final$route)),
+                  n_counts_bbs = max(1,nrow(df_bbs_final)),
                   n_counts_owl = nrow(df_owl_final),
                   n_strata = max(df_full$stratum),
                   n_years = max(df_full$yr),
@@ -595,23 +704,25 @@ stan_data <- list(n_sites_owl = max(df_owl_final$route),
                   yrev = seq(from = (yr_ebird-(min(df_full$year))),to = 1, by = -1),
                   
                   
-                  count_bbs = df_bbs_final$count,
-                  site_bbs = df_bbs_final$route,
-                  year_bbs = df_bbs_final$yr,
-                  strat_bbs = df_bbs_final$stratum,
+                  count_bbs = count_bbs,
+                  site_bbs = site_bbs,
+                  year_bbs = year_bbs,
+                  strat_bbs = strat_bbs,
                   
                   count_owl = df_owl_final$count,
                   site_owl = df_owl_final$route,
                   year_owl = df_owl_final$yr,
                   strat_owl = df_owl_final$stratum,
                   proto = df_owl_final$protocol,
-                  off_set = log(df_owl_final$nstop),
+                  off_set = log(df_owl_final$nstop), #effort offset for owl surveys
                   
-                  n_train_bbs = nrow(df_bbs_final),
+                  n_train_bbs = ifelse(nrow(df_bbs_final) > 0,
+                                       nrow(df_bbs_final),
+                                       1),
                   n_train_owl = nrow(df_owl_final),
                   n_test_bbs = 1,
                   n_test_owl = 1,
-                  train_bbs = 1:nrow(df_bbs_final),
+                  train_bbs = train_bbs,
                   test_bbs = 1,
                   train_owl = 1:nrow(df_owl_final),
                   test_owl = 1,
@@ -633,14 +744,124 @@ stan_data <- list(n_sites_owl = max(df_owl_final$route),
                   heavy_tailed = 0
 )
 
+for(j in names(stan_data)){
+  if(!j %in% c("log_mean_rel_abund",
+              "off_set")){
+    stan_data[[j]] <- as.integer(stan_data[[j]])
+  }
+}
+
+
+# coverage comparison -----------------------------------------------------
+
+strata_cov <- strata_map %>%
+  rename(grid_cell_name = strata_name) %>%  
+  sf::st_intersection(sf::st_buffer(country,10000))%>% 
+  filter(!is.na(strata_name))#
+
+strat_area <- as.numeric(sf::st_area(strata_cov)/1e6)
+
+strata_cov <- strata_cov %>% 
+  mutate(area_km2 = strat_area) 
+
+range_info <- grid_range(sp,
+                             coverage_grid_custom = strata_cov,
+                             seasonal_range = season)
+
+
+survey_data <- df_full %>% 
+  select(year,route_id,longitude,latitude)
+  
+survey_data_sf <- df_full %>% 
+  select(year,route_id,longitude,latitude) %>% 
+  st_as_sf(coords = c("longitude","latitude"),crs = 4326)
+
+sp_coverage <- overlay_range_data(range = range_info,
+                                  survey_sites = survey_data,
+                                  sites = "route_id",
+                                  years = "year",
+                                  x_coord = "longitude",
+                                  y_coord = "latitude",
+                                  crs_site_coordinates = 4326,
+                                  add_survey_sites_to_range = TRUE,
+                                  proportion_area_included = 0.5)
+
+
+
+cumulative_coverage_map <- sp_coverage$cumulative_coverage_map
+overall_coverage_estimate <- sp_coverage$cumulative_coverage_estimate
+
+coverage_overall <- ggplot()+
+  geom_sf(data = cumulative_coverage_map,
+          aes(fill = coverage))+
+  geom_sf(data = survey_data_sf,
+          alpha = 0.3,
+          size = 0.3)+
+  geom_sf(data = range_info$range_map,
+          fill = NA)+
+  scale_fill_viridis_d()+
+  labs(title = paste(sp,"proportion covered = ",round(overall_coverage_estimate$coverage_proportion,2)))
+
+pdf(paste0("figures/coverage_",sp_ebird,".pdf"))
+print(coverage_overall)
+dev.off()
+
+
+ann_coverage <- NULL
+cumulative_coverage <- NULL
+
+for(reg in names(regs_maps)){
+  
+  mp_tmp <- regs_maps[[reg]]
+  tmp_coverage <- regional_summary(sp_coverage,
+                                   regions = mp_tmp,
+                                   region_name = "strata_name")
+  
+  ann_tmp <- tmp_coverage$regional_annual_coverage_estimate %>%
+    filter(coverage) %>%
+    mutate(region_type = reg,
+           species = sp)
+  
+  cumulative_tmp <- tmp_coverage$regional_cumulative_coverage_estimate %>%
+    filter(coverage) %>%
+    mutate(region_type = reg,
+           species = sp)
+  
+  ann_coverage <- bind_rows(ann_coverage,ann_tmp)
+  cumulative_coverage <- bind_rows(cumulative_coverage,cumulative_tmp)
+  
+} #end of regions loop
 
 
 
 
+
+save(list = c("stan_data",
+              "df_full",
+              "meta_strata",
+              "meta_years","strata_used",
+              "df_owl_final",
+              "df_bbs_final",
+              "ann_coverage",
+              "cumulative_coverage",
+              "sp_coverage"),
+     file = paste0("data/pre_fit_data_",sp_ebird,".RData"))
+}# end data prep species loop
 # Model fit ---------------------------------------------------------------
 
+
+re_fit <- FALSE
+for(sp in c("Great Horned Owl","Barred Owl","Northern Saw-whet Owl","Boreal Owl")[-1]){
+ 
+  
+
+  #sp_id <- unique(sp_obs_owl$species_id)
+  sp_ebird <- ebirdst::get_species(sp)
+ 
 model <- cmdstanr::cmdstan_model("models/first_difference_spatial_owls_integrated.stan")
 
+
+load(paste0("data/pre_fit_data_",sp_ebird,".RData"))
 
 if(re_fit){
 
@@ -665,59 +886,183 @@ saveRDS(summ2, paste0(output_dir,"fit_summary_","temp","_",sp_ebird,".rds"))
 }
 
 
-betas <- summ2 %>% filter(grepl("beta[",variable, fixed = TRUE)) %>% 
-  mutate(year = as.integer(str_extract(variable,"([[:digit:]]{1,})(?=]$)")),
-         stratum = as.integer(str_extract(variable,"(?<=\\[)[[:digit:]]{1,}")))
 
-beta_by_year <- betas %>% 
-  group_by(year) %>% 
-  summarise(min_ess = min(ess_bulk),
-            max_rhat = max(rhat),
-            mean_ess = mean(ess_bulk),
-            mean_rhat = mean(rhat))
+# 
+# betas <- summ2 %>% filter(grepl("beta[",variable, fixed = TRUE)) %>% 
+#   mutate(year = as.integer(str_extract(variable,"([[:digit:]]{1,})(?=]$)")),
+#          stratum = as.integer(str_extract(variable,"(?<=\\[)[[:digit:]]{1,}")))
+# 
+# beta_by_year <- betas %>% 
+#   group_by(year) %>% 
+#   summarise(min_ess = min(ess_bulk),
+#             max_rhat = max(rhat),
+#             mean_ess = mean(ess_bulk),
+#             mean_rhat = mean(rhat))
+# 
+# 
+# beta_by_stratum <- betas %>% 
+#   filter(!is.na(rhat)) %>% 
+#   group_by(stratum) %>% 
+#   summarise(min_ess = min(ess_bulk),
+#             max_rhat = max(rhat),
+#             mean_ess = mean(ess_bulk),
+#             mean_rhat = mean(rhat))
+# 
+# 
+# ns <- summ2 %>% filter(grepl("n[",variable,fixed = TRUE))%>% 
+#   mutate(year = as.integer(str_extract(variable,"([[:digit:]]{1,})(?=]$)")),
+#          stratum = as.integer(str_extract(variable,"(?<=\\[)[[:digit:]]{1,}")))
+# 
+
+protocols <- summ2 %>% filter(grepl("protocol[",variable, fixed = TRUE))
 
 
-beta_by_stratum <- betas %>% 
-  filter(!is.na(rhat)) %>% 
-  group_by(stratum) %>% 
-  summarise(min_ess = min(ess_bulk),
-            max_rhat = max(rhat),
-            mean_ess = mean(ess_bulk),
-            mean_rhat = mean(rhat))
-
-
-ns <- summ2 %>% filter(grepl("n[",variable,fixed = TRUE))%>% 
-  mutate(year = as.integer(str_extract(variable,"([[:digit:]]{1,})(?=]$)")),
-         stratum = as.integer(str_extract(variable,"(?<=\\[)[[:digit:]]{1,}")))
-
-
-
+pdf(paste0("figures/temp_fit_summary_",sp_ebird,".pdf"),
+    width = 11,
+    height = 8.5) 
 
 
 
 # explore results ---------------------------------------------------------
 
 
+provs <- bbsBayes2::load_map("prov_state") %>% 
+  filter(country_code == "CA") %>% 
+  mutate(survey_region = ifelse(province_state %in% c("New Brunswick",
+                                                      "Nova Scotia",
+                                                      "Prince Edward Island"),
+                                "Maritimes",
+                                province_state)) %>% 
+  select(province_state,survey_region)
+
+alt_regs <- strata_used %>% 
+  st_join(provs,
+          left = TRUE,
+          largest = TRUE) %>% 
+  st_drop_geometry() %>% 
+  select(strata_name,survey_region)
+  
+
 indices <- generate_indices(model_fit = fit2,
                            meta_strata = meta_strata, # df with columns strata, strata_name, and optional weights
                             meta_years = meta_years,
+                           raw_data = df_full,
                             quantiles = c(0.025, 0.05, 0.25, 0.75, 0.95, 0.975),
-                            regions = c("survey_wide","strata_level"),
-                            regions_index = NULL, # alternate post-hoc combinations of strata to form new regions - data frame with strata_name and region
+                            regions = c("survey_wide","strata_level","survey_region"),
+                            regions_index = alt_regs, # alternate post-hoc combinations of strata to form new regions - data frame with strata_name and region
                             alternate_n = "n",
                             gam_smooths = FALSE,
                             start_year = NULL,
                             max_backcast = NULL,
                             drop_exclude = FALSE,
                             hpdi = TRUE,
-                            quiet = FALSE)
+                            quiet = FALSE,
+                           weighted = TRUE)
 
+
+tt_all <- NULL
+
+yrs <- data.frame(st_year = c(1995,
+                                1995,
+                                2005,
+                                2015,
+                                2011),
+                  en_year = c(2024,
+                              2005,
+                              2015,
+                              2024,
+                              2024))
+for(i in 1:nrow(yrs)){
+  
+  st_year <- yrs[i,"st_year"]
+  en_year <- yrs[i,"en_year"]
+  
+
+trends <- generate_trends(indices,
+                          min_year = st_year,
+                          max_year = en_year,
+                          quantiles = c(0.025, 0.05, 0.25, 0.75, 0.95, 0.975),
+                          slope = FALSE,
+                          gam = FALSE,
+                          prob_decrease = NULL,
+                          prob_increase = NULL,
+                          hpdi = TRUE)
+
+
+tt <- trends$trends %>% 
+  mutate(trend_period = paste(start_year,end_year,sep = "-"))
+
+tt_all <- bind_rows(tt_all,tt)
+}
+
+
+
+map_strat_trends <- strata_used %>% 
+  inner_join(tt_all,
+             by = c("strata_name" = "region"))
+
+t_map <- ggplot()+
+  geom_sf(data = map_strat_trends,
+          aes(fill = trend))+
+  #scale_fill_viridis_c()+
+  colorspace::scale_fill_continuous_diverging(rev = TRUE,
+                                              palette = "Blue-Red 3")+
+  facet_wrap(vars(trend_period))
+
+
+print(t_map)
+
+
+
+tt_all <- NULL
+
+yrs <- data.frame(st_year = c(seq(1995,2023)),
+                  en_year = c(seq(1996,2024)))
+for(i in 1:nrow(yrs)){
+  
+  st_year <- yrs[i,"st_year"]
+  en_year <- yrs[i,"en_year"]
+  
+  
+  trends <- generate_trends(indices,
+                            min_year = st_year,
+                            max_year = en_year,
+                            quantiles = c(0.025, 0.05, 0.25, 0.75, 0.95, 0.975),
+                            slope = FALSE,
+                            gam = FALSE,
+                            prob_decrease = NULL,
+                            prob_increase = NULL,
+                            hpdi = TRUE)
+  
+  
+  tt <- trends$trends %>% 
+    mutate(trend_period = paste(start_year,end_year,sep = "-"))
+  
+  tt_all <- bind_rows(tt_all,tt)
+}
+
+
+
+map_strat_trends <- strata_used %>% 
+  inner_join(tt_all,
+             by = c("strata_name" = "region"))
+
+t_map <- ggplot()+
+  geom_sf(data = map_strat_trends,
+          aes(fill = trend))+
+  #scale_fill_viridis_c()+
+  colorspace::scale_fill_continuous_diverging(rev = TRUE,
+                                              palette = "Blue-Red 3")+
+  facet_wrap(vars(trend_period))
+
+
+print(t_map)
 
 
 
 trends <- generate_trends(indices,
-                          min_year = NULL,
-                          max_year = NULL,
+                          # min_year = 2011,
+                          # max_year = 2022,
                           quantiles = c(0.025, 0.05, 0.25, 0.75, 0.95, 0.975),
                           slope = FALSE,
                           gam = FALSE,
@@ -728,20 +1073,91 @@ trends <- generate_trends(indices,
 
 tt <- trends$trends
 
+country <- rnaturalearth::ne_countries(continent = "North America") %>%
+  filter(admin %in% c("Canada")) %>%
+  sf::st_transform(crs = sf::st_crs(stratum)) %>%
+  rename(country = admin) %>%
+  select(country)
 
 map_strat_trends <- strata_used %>% 
+  sf::st_intersection(country) %>% 
   inner_join(tt,
             by = c("strata_name" = "region"))
 
+
+bb <- st_bbox(map_strat_trends)
+
+
+survey_sites <- df_full %>% 
+  mutate(Survey = ifelse(dataset == "bbs",
+                         "BBS",
+                         "Nocturnal Owl Survey")) %>% 
+  select(route_id,Survey,longitude,latitude) %>% 
+  distinct() %>% 
+  st_as_sf(coords = c("longitude","latitude"),
+           crs = 4326)
+
+
 t_map <- ggplot()+
+  geom_sf(data = provs,
+          fill = NA)+
   geom_sf(data = map_strat_trends,
           aes(fill = trend))+
+  geom_sf(data = survey_sites,
+          aes(colour = Survey),
+          inherit.aes = FALSE,
+          size = 0.03)+
+  labs(title = paste(sp,"Trends across Canada, 1995-2024"),
+       caption = paste("Population trends from an integrated analysis of Nocturnal Owl Monitoring data and BBS"))+
+  coord_sf(xlim = bb[c("xmin","xmax")],
+           ylim = bb[c("ymin","ymax")])+
   #scale_fill_viridis_c()+
-  colorspace::scale_fill_continuous_diverging(rev = TRUE,
-                                              palette = "Blue-Red 3")
+  scale_colour_viridis_d(direction = -1,
+                         name = "Survey",
+                         end = 0.99)+
+  colorspace::scale_fill_binned_diverging(rev = TRUE,
+                                              palette = "Blue-Red 3",
+                                              name = "Trend %/year",
+                                          breaks = c(-Inf,-5,-2,-1,-0.5,0.5,1,2,5,Inf))+
+  theme_bw()
 
 
-t_map
+
+# pdf("temp.pdf")
+ print(t_map)
+# dev.off()
+
+# ch_map <- ggplot()+
+#   geom_sf(data = map_strat_trends,
+#           aes(fill = percent_change))+
+#   #scale_fill_viridis_c()+
+#   colorspace::scale_fill_binned_diverging(rev = TRUE,
+#                                           guide = "colorsteps",
+#                                               palette = "Blue-Red 3",
+#                                               breaks = c(-Inf,-50,-25,-10,10,33,100,Inf))
+# 
+# 
+# print(ch_map)
+
+# ch_map_up <- ggplot()+
+#   geom_sf(data = map_strat_trends,
+#           aes(fill = percent_change_q_0.75))+
+#   #scale_fill_viridis_c()+
+#   colorspace::scale_fill_continuous_diverging(rev = TRUE,
+#                                               palette = "Blue-Red 3")
+# 
+# 
+# ch_map_up
+# ch_map_do <- ggplot()+
+#   geom_sf(data = map_strat_trends,
+#           aes(fill = percent_change_q_0.25))+
+#   #scale_fill_viridis_c()+
+#   colorspace::scale_fill_continuous_diverging(rev = TRUE,
+#                                               palette = "Blue-Red 3")
+
+# 
+# print(ch_map_do)
+
 
 
 a_map <- ggplot()+
@@ -750,6 +1166,111 @@ a_map <- ggplot()+
   scale_fill_viridis_c()
 
 
-a_map
+print(a_map)
 
+
+ii <- indices$indices 
+
+indices_map <- strata_used %>% 
+  inner_join(ii,
+             by = c("strata_name" = "region"))
+
+
+
+indices_map_sel <- indices_map %>% 
+  filter(year %in% seq(1995,2023,by = 5))
+
+
+a_map <- ggplot()+
+  geom_sf(data = indices_map_sel,
+          aes(fill = index))+
+  scale_fill_viridis_c()+
+  facet_wrap(vars(year))
+
+
+print(a_map)
+
+
+
+ii_surv <- ii %>% 
+  filter(region == "survey_wide") 
+
+
+traj <- ggplot(data = ii_surv,
+               aes(x = year, 
+                   y = index))+
+  #geom_point(aes(x = year, y = obs_mean))+
+  geom_ribbon(aes(ymin = index_q_0.05,
+                  ymax = index_q_0.95),
+              alpha = 0.3)+
+  coord_cartesian(ylim = c(0,NA))+
+  scale_x_continuous(breaks = c(1995,
+                                2000,
+                                2005,
+                                2010,
+                                2015,
+                                2020,
+                                2025))+
+  geom_line()+
+  theme_bw()+
+  ylab("Index of relative abundance")+
+  xlab("")+
+  labs(title = paste(sp,"Population trajectory for Canada"),
+             caption = paste("Population trajectory from an integrated analysis of Nocturnal Owl Monitoring data and BBS"))
+
+
+print(traj)
+
+
+
+ii_regs <- ii %>% 
+  filter(region_type == "survey_region")
+
+
+
+traj <- ggplot(data = ii_regs,
+               aes(x = year, 
+                   y = index))+
+  geom_ribbon(aes(ymin = index_q_0.05,
+                  ymax = index_q_0.95),
+              alpha = 0.3)+
+  geom_line()+
+  scale_y_continuous(limits = c(0,NA))+
+  facet_wrap(vars(region),
+             scales = "free_y")
+
+
+print(traj)
+
+
+
+
+
+
+survey_explore <- df_full %>% 
+  group_by(strata_name,dataset) %>% 
+  summarise(n_surveys = n()) %>% 
+  arrange(n_surveys) %>% 
+  group_by(strata_name) %>% 
+  sample_n(1)
+
+
+survey_expl_map <- strata_used %>% 
+  left_join(survey_explore) 
+
+
+survey_map <- ggplot()+
+  geom_sf(data = survey_expl_map,
+          aes(fill = dataset))+
+  scale_fill_viridis_d()
+print(survey_map)
+
+
+dev.off()
+
+
+
+
+
+} #end species loop
 

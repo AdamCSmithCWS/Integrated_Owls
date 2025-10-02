@@ -3,6 +3,7 @@ generate_indices <- function(
     model_fit = NULL,
     meta_strata = NULL, # df with columns strata, strata_name, and optional weights
     meta_years = NULL,
+    raw_data = NULL,
     quantiles = c(0.025, 0.05, 0.25, 0.75, 0.95, 0.975),
     regions = c("survey_wide","strata_level"),
     regions_index = NULL, # alternate post-hoc combinations of strata to form new regions - data frame with strata_name and region
@@ -12,7 +13,8 @@ generate_indices <- function(
     max_backcast = NULL,
     drop_exclude = FALSE,
     hpdi = FALSE,
-    quiet = FALSE) {
+    quiet = FALSE,
+    weighted = FALSE) {
   
   # Checks
   check_numeric(quantiles)
@@ -112,13 +114,15 @@ meta_strata <- meta_strata %>%
                      strata_remove_flag = 0, .groups = "drop")
   
   n_routes_total <- raw_data_sel %>%
-    dplyr::select("stratum", "route_id") %>%
+    dplyr::select("stratum", "route_id", "count") %>%
     dplyr::group_by(.data$stratum) %>% 
-    dplyr::summarize(n_routes_total = length(unique(route_id)), .groups = "drop")
+    dplyr::summarize(n_routes_total = length(unique(route_id)),
+                     obs_mean_stratum = mean(count), .groups = "drop")
   
   obs_strata <- obs_strata %>% 
     dplyr::inner_join(n_routes_total,
-                      by = "stratum")
+                      by = "stratum") %>% 
+    dplyr::mutate(obs_mean = obs_mean/obs_mean_stratum)
   
   indices <- dplyr::tibble()
   N_all <- list()
@@ -134,6 +138,11 @@ meta_strata <- meta_strata %>%
       dplyr::group_by(.data[[rr]]) %>%
       dplyr::mutate(area_weight_non_zero = .data$weights/sum(.data$weights)) %>%
       dplyr::ungroup()
+    
+    if(!weighted){
+      meta_strata_sub <- meta_strata %>%
+        dplyr::mutate(area_weight_non_zero = 1) 
+    }
     
     # Calculate observation statistics for this composite region
     obs_region <- obs_strata %>%
@@ -207,7 +216,7 @@ meta_strata <- meta_strata %>%
       # Create back up col for use in calculations
       tidyr::nest(data = -dplyr::any_of(rr)) %>%
       dplyr::group_by(.data[[rr]]) %>%
-      dplyr::summarize(N = purrr::map(.data$data, calc_weights, .env$n_sub),
+      dplyr::summarize(N = purrr::map(.data$data, calc_weights, .env$n_sub, .env$meta_strata_sub),
                        N_names = paste0(rr, "_", .data[[rr]]),
                        Q = purrr::map(.data$N, calc_quantiles,
                                       .env$quantiles)) %>%
@@ -225,7 +234,7 @@ meta_strata <- meta_strata %>%
         obs_mean = dplyr::if_else((.data$year %in% .env$missing_yrs) |
                                     (.data$n_routes == 0),
                                   NA_real_,
-                                  .data$obs_mean)) %>%
+                                  .data$obs_mean))  %>% 
       # Add in quantiles
       dplyr::left_join(tidyr::unnest(samples, "Q"), by = c(rr, "year")) %>%
       # Clean up
@@ -235,6 +244,7 @@ meta_strata <- meta_strata %>%
                     "index", dplyr::contains("index_q"),
                     "obs_mean", "n_routes", "n_routes_total", "n_non_zero",
                     "backcast_flag") %>%
+      dplyr::mutate(obs_mean = mean(index)*obs_mean) %>% 
       dplyr::bind_rows(indices, .)
   }
   
@@ -347,7 +357,7 @@ samples_to_array <- function(model_fit, alternate_n, years_to_keep,
 
 
 
-calc_weights <- function(data, n) {
+calc_weights <- function(data, n, meta_strata_sub) {
   
   # Weight each sampled n
   n_weight <- n[, data$strata_name, , drop = FALSE]

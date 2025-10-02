@@ -41,7 +41,8 @@ data {
   array[n_counts_owl] int<lower=1> strat_owl;               // strata indicators
   array[n_counts_owl] int<lower=1> year_owl; // year index
   array[n_counts_owl] int<lower=1> site_owl; // site index
-  array[n_counts_owl] int<lower=1> proto; // site index
+  array[n_counts_owl] int<lower=1> proto; // protocol index
+  
   vector[n_counts_owl] off_set; // site index
 
   vector[n_strata] log_mean_rel_abund; // log-transformed mean relative abund in stratum
@@ -65,13 +66,13 @@ data {
   int<lower=0,upper=1> calc_log_lik; //indicator if log_lik should be calculated (log_lik for all obs to support loo = 1, no log-lik = 0)
   int<lower=0,upper=1> calc_cv; //indicator if CV should be calculated (CrossValidation = 1, no CV = 0)
   // CV folds - if calc_cv == 1 then the following values define the training and test sets
-  int<lower=1, upper=n_counts_bbs> n_train_bbs; //
-  int<lower=1, upper=n_counts_bbs> n_test_bbs; //
+  int<lower=0, upper=n_counts_bbs> n_train_bbs; //
+  int<lower=0, upper=n_counts_bbs> n_test_bbs; //
   array[n_train_bbs] int<lower=1, upper=n_counts_bbs> train_bbs; // indices of counts to include in train data
   array[n_test_bbs] int<lower=1, upper=n_counts_bbs> test_bbs; // indices of counts to include in test data
  
-  int<lower=1, upper=n_counts_owl> n_train_owl; //
-  int<lower=1, upper=n_counts_owl> n_test_owl; //
+  int<lower=0, upper=n_counts_owl> n_train_owl; //
+  int<lower=0, upper=n_counts_owl> n_test_owl; //
   array[n_train_owl] int<lower=1, upper=n_counts_owl> train_owl; // indices of counts to include in train data
   array[n_test_owl] int<lower=1, upper=n_counts_owl> test_owl; // indices of counts to include in test data
   
@@ -162,12 +163,12 @@ transformed parameters {
   real<lower=0> phi_bbs; //transformed sdnoise if use_pois == 0 (and therefore Negative Binomial)
   real<lower=0> phi_owl; //transformed sdnoise
  
-  if(use_pois){
+  if(use_pois == 1){
     phi_bbs = 0;
     phi_owl = 0;
   }else{
-    phi_bbs = 1/sqrt(sdnoise_bbs); //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
-    phi_owl = 1/sqrt(sdnoise_owl); //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+    phi_bbs = 1/sdnoise_bbs; //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+    phi_owl = 1/sdnoise_owl; //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
   }
   
   protocol = (sdprotocol*protocol_raw); //
@@ -195,7 +196,7 @@ for(t in (ebird_year+1):n_years){
   }
 }
 
-
+if(n_counts_bbs > 1){
   for(i in 1:n_train_bbs){
     real noise;
     //real obs = sdobs*obs_raw[observer_tr[i]];
@@ -209,6 +210,7 @@ for(t in (ebird_year+1):n_years){
     E_bbs[i] =  BBS + yeareffect[strat_bbs_tr[i],year_bbs_tr[i]] + ste + noise;
   }
   
+}
   
   
     for(i in 1:n_train_owl){
@@ -252,12 +254,12 @@ model {
   sdnoise_bbs ~ student_t(3,0,1); //prior on scale of extra Poisson log-normal variance or inverse sqrt(phi) for negative binomial
   sdnoise_owl ~ student_t(3,0,1); //prior on scale of extra Poisson log-normal variance or inverse sqrt(phi) for negative binomial
   }else{
-  sdnoise_bbs ~ student_t(3,0,1); //prior on scale of extra Poisson log-normal variance or inverse sqrt(phi) for negative binomial
-  sdnoise_owl ~ student_t(3,0,1); //prior on scale of extra Poisson log-normal variance or inverse sqrt(phi) for negative binomial
+  sdnoise_bbs ~ student_t(3,0,1); // ~ inv_gamma(0.4,0.3);//prior on scale of extra Poisson log-normal variance or inverse sqrt(phi) for negative binomial
+  sdnoise_owl ~ student_t(3,0,1); // ~ inv_gamma(0.4,0.3);// prior on scale of extra Poisson log-normal variance or inverse sqrt(phi) for negative binomial
   }  
 //  sdobs ~ normal(0,0.3); // informative prior on scale of observer effects - suggests observer variation larger than 3-4-fold differences is unlikely
-  sdbeta ~ student_t(3,0,0.05); // prior on sd among strata in the yearly differences
-  sdBETA ~ student_t(3,0,0.5); // prior on sd of mean hyperparameter time-series of range-wide mean
+  sdbeta ~ student_t(3,0,0.1); // prior on sd among strata in the yearly differences
+  sdBETA ~ student_t(3,0,0.2); // prior on sd of mean hyperparameter time-series of range-wide mean
   BETA_raw ~ std_normal();// prior on fixed effect mean intercept
 
   // bbs
@@ -268,7 +270,8 @@ model {
   
   //owl 
   protocol_raw ~ std_normal();//site effects
-  sum(protocol_raw) ~ normal(0,0.001*n_protocols); //
+  sum(protocol_raw) ~ normal(0,0.001*n_protocols); // sum to zero constraint
+  
   OWL ~ std_normal();// prior on fixed effect mean of owl surveys
   sdste_owl ~ student_t(3,0,1); //prior on sd of site effects
   ste_owl_raw ~ std_normal();//site effects
@@ -293,10 +296,14 @@ for(t in 1:(n_years_m1)){
  
   
 if(use_pois){
-  count_bbs_tr ~ poisson_log(E_bbs); //vectorized count likelihood with log-transformation
+   if(n_counts_bbs > 1){
+ count_bbs_tr ~ poisson_log(E_bbs); //vectorized count likelihood with log-transformation
+   }
   count_owl_tr ~ poisson_log(E_owl); //vectorized count likelihood with log-transformation
 }else{
+  if(n_counts_bbs > 1){
    count_bbs_tr ~ neg_binomial_2_log(E_bbs,phi_bbs); //vectorized count likelihood with log-transformation
+  }
    count_owl_tr ~ neg_binomial_2_log(E_owl,phi_owl); //vectorized count likelihood with log-transformation
  
 }
@@ -322,21 +329,27 @@ if(use_pois){
   for(i in 1:n_train_owl){
    log_lik_owl[i] = poisson_log_lpmf(count_owl_tr[i] | E_owl[i]);
    }
-     for(i in 1:n_train_bbs){
+       if(n_counts_bbs > 1){
+for(i in 1:n_train_bbs){
    log_lik_bbs[i] = poisson_log_lpmf(count_bbs_tr[i] | E_bbs[i]);
    }
+       }
   }else{
    for(i in 1:n_train_owl){
    log_lik_owl[i] = neg_binomial_2_log_lpmf(count_owl_tr[i] | E_owl[i] , phi_owl);
    } 
+     if(n_counts_bbs > 1){
   for(i in 1:n_train_bbs){
    log_lik_bbs[i] = neg_binomial_2_log_lpmf(count_bbs_tr[i] | E_bbs[i] , phi_bbs);
    } 
+     }
   }
   }
   
   if(calc_cv){
     
+      if(n_counts_bbs > 1){
+
     for(i in 1:n_test_bbs){
       
     real noise;
@@ -364,7 +377,7 @@ if(use_pois){
    }
   
   }
-  
+      }
   
   /// owls
    for(i in 1:n_test_owl){
