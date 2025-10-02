@@ -1239,6 +1239,57 @@ t_map <- ggplot()+
  # pdf("temp.pdf")
  print(t_map)
  
+ 
+ n_owls <- df_full %>% 
+   mutate(Survey = ifelse(dataset == "bbs",
+                          "BBS",
+                          "Nocturnal Owl Survey"),
+          Survey = factor(Survey,
+                          levels = rev(c("BBS","Nocturnal Owl Survey")),
+                          ordered = TRUE)) %>% 
+   ungroup() %>% 
+   group_by(Survey) %>% 
+   summarise(n_surveys = n(),
+             n_sites = length(unique(route_id)),
+             n_non_zeros = length(which(count > 0))) %>% 
+   mutate(proportion_non_zero = round(n_non_zeros/n_surveys,2))
+ 
+ ns_o <- n_owls %>% 
+   filter(Survey == "Nocturnal Owl Survey") 
+ ns_b <- n_owls %>% 
+   filter(Survey == "BBS") 
+ if(nrow(ns_b) == 0){
+   ns_b <- data.frame(n_surveys = 0,
+                      n_sites = 0,
+                      proportion_non_zero = NA)
+ }
+ 
+ t_map <- ggplot()+
+   geom_sf(data = provs,
+           fill = NA)+
+   geom_sf(data = map_strat_trends,
+           fill = NA)+
+   geom_sf(data = survey_sites,
+           aes(colour = Survey),
+           inherit.aes = FALSE,
+           size = 0.2)+
+   labs(title = paste0(sp," Survey routes contributing to trends"),
+   subtitle = paste0(ns_o$n_sites," Nocturnal Owl Survey routes with ", ns_o$n_surveys, " surveys and species observed during ",ns_o$proportion_non_zero*100,"% \n",
+                     ns_b$n_sites, " BBS routes with ",ns_b$n_surveys," surveys and species observed during ",ns_b$proportion_non_zero,"%"),
+        caption = paste("Population trends from an integrated analysis of Nocturnal Owl Monitoring data and BBS"))+
+   coord_sf(xlim = bb[c("xmin","xmax")],
+            ylim = bb[c("ymin","ymax")])+
+   #scale_fill_viridis_c()+
+   scale_colour_viridis_d(direction = 1,
+                          name = "Survey",
+                          end = 0.7)+
+   theme_bw()
+ 
+ 
+ 
+ # pdf("temp.pdf")
+ print(t_map)
+ 
 # ch_map <- ggplot()+
 #   geom_sf(data = map_strat_trends,
 #           aes(fill = percent_change))+
