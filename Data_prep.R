@@ -199,7 +199,7 @@ survey_map <- ggplot()+
   theme_bw()
   
 
-png(paste0("Nocturnal_owl_survey_routes.png"),
+png(paste0("Figures/Nocturnal_owl_survey_routes.png"),
     res = 300, height = 5, width = 8,
     units = "in")
 print(survey_map)
@@ -1510,19 +1510,19 @@ print(survey_map)
 dev.off()
 
 
-png(paste0(sp,"_Canada_trajectory.png"),
+png(paste0("Figures/",sp,"_Canada_trajectory.png"),
     res = 300, height = 5, width = 8,
     units = "in")
 print(traj_nat)
 dev.off()
 
-png(paste0(sp,"_Canada_trend_long.png"),
+png(paste0("Figures/",sp,"_Canada_trend_long.png"),
     res = 300, height = 5, width = 8,
     units = "in")
 print(t_map_long)
 dev.off()
 
-png(paste0(sp,"_Canada_trend_short.png"),
+png(paste0("Figures/",sp,"_Canada_trend_short.png"),
     res = 300, height = 5, width = 8,
     units = "in")
 print(t_map_short)
