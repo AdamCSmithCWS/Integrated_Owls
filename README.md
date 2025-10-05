@@ -26,6 +26,8 @@ More recently (since 2010) population trends vary more across the country.
 
 ![Spatial variation in short-term trends for Barred Owl.](figures/Barred%20Owl_Canada_trend_short.png)
 
+### Boreal Owl
+
 The Nocturnal Owl Survey data can also estimate population trends and trajectories for species with no other suitable source of standardized monitoring data. For example, Boreal Owl is considered data deficient in the most recent State of Canada's Birds, but the Nocturnal Owl Survey data show the species population has decreased, and that decrease is largely driven by declines in Eastern Canada.
 
 ![Population trajectory for Boreal Owls.](figures/Boreal Owl_Canada_trajectory.png)
