@@ -167,8 +167,8 @@ transformed parameters {
     phi_bbs = 0;
     phi_owl = 0;
   }else{
-    phi_bbs = 1/sdnoise_bbs; //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
-    phi_owl = 1/sdnoise_owl; //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+    phi_bbs = 1/sqrt(sdnoise_bbs); //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+    phi_owl = 1/sqrt(sdnoise_owl); //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
   }
   
   protocol = (sdprotocol*protocol_raw); //

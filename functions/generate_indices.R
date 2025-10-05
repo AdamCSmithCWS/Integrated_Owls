@@ -122,7 +122,7 @@ meta_strata <- meta_strata %>%
   obs_strata <- obs_strata %>% 
     dplyr::inner_join(n_routes_total,
                       by = "stratum") %>% 
-    dplyr::mutate(obs_mean = obs_mean/obs_mean_stratum)
+    dplyr::mutate(obs_mean = obs_mean/obs_mean_stratum) ## obs_mean is a proportion value, proportion of this year's mean count relative to the mean count across all years in the stratum
   
   indices <- dplyr::tibble()
   N_all <- list()

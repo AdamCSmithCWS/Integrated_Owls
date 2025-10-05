@@ -84,6 +84,8 @@ tst_map <- ggplot()+
 
 tst_map
 
+
+
 event_map10 <- event_map %>% 
   filter(span_years > 9)
 
@@ -113,6 +115,8 @@ obs_owl <- read_csv("data/owls/NationalOwlData.csv") %>%
   filter(RouteIdentifier != "NS050") %>%  # temporary removal of one problematic route that is replicated in two provinces%>% 
   mutate(unique_survey = paste(RouteIdentifier,survey_year,survey_month,survey_day, sep = "-"))
   
+
+
 
 # # identifying replicated survey events ---------------------------------
 # 
@@ -171,6 +175,35 @@ regs_maps <- list(country = country,
                   stratum = stratum,
                   bcr_by_country = bcr_by_country)
 
+
+
+event_map2 <- event_map %>% 
+  #filter(min_year < 2016) %>% 
+  st_transform(crs = st_crs(prov_state))
+
+bb <- st_bbox(event_map2)
+
+survey_map <- ggplot()+
+  geom_sf(data = prov_state,
+          fill = NA)+
+  geom_sf(data = event_map2,
+          aes(colour = min_year),
+          alpha = 0.3)+
+  scale_colour_viridis_c(direction = -1,
+                         name = "First year\nsurveyed")+
+  labs(title = paste0("Nocturnal Owl Survey routes"),
+       subtitle = paste(nrow(events_owl), "surveys, at",length(unique(event_map$RouteIdentifier)),"routes\n",
+                         "by",length(unique(events_owl$CollectorNumber)),"volunteer observers"))+
+  coord_sf(xlim = bb[c("xmin","xmax")],
+           ylim = bb[c("ymin","ymax")])+
+  theme_bw()
+  
+
+png(paste0("Nocturnal_owl_survey_routes.png"),
+    res = 300, height = 5, width = 8,
+    units = "in")
+print(survey_map)
+dev.off()
 
 # Species loop ------------------------------------------------------------
 
@@ -427,12 +460,41 @@ df_owl_final <- df_full %>%
   filter(dataset == "owl") %>% 
   mutate(route = as.integer(factor(route_id)),
          protocol = as.integer(factor(protocol_id)))
+# 
+# 
+# tst <- ggplot(data = df_owl_final,
+#               aes(group = factor(protocol),
+#                   colour = factor(protocol),
+#                   x = nstop, y = log(count+1,10)))+
+#   geom_point(alpha = 0.2,position = position_jitter(width = 0.1, height = 0.1))+
+#   geom_smooth(method = "lm",se = FALSE)+
+#   scale_x_continuous(transform = "log10")+
+#   scale_colour_viridis_d()+
+#   facet_wrap(vars(protocol_id))
+#         
+# 
+# tst        
+#   
+# 
+# rt_var <- df_owl_final %>% 
+#   group_by(route_id) %>% 
+#   summarise(min_nstop = min(nstop),
+#             max_nstop = max(nstop),
+#             mean_nstop = mean(nstop),
+#             sd_nstop = sd(nstop),
+#             nsurveys = n(),
+#             nyears = length(unique(year)),
+#             mean_count = mean(count),
+#             sd_count = sd(count))
+
 
 # prepare spatial components ----------------------------------------------
 meta_strata <- route_strata_join %>% 
   select(strata_name,stratum) %>% 
   distinct()
   
+
+
 
 strata_used <- strata_map %>% 
   inner_join(meta_strata,
@@ -850,7 +912,7 @@ save(list = c("stan_data",
 # Model fit ---------------------------------------------------------------
 
 
-re_fit <- FALSE
+#re_fit <- FALSE
 for(sp in c("Great Horned Owl","Barred Owl","Northern Saw-whet Owl","Boreal Owl")[-1]){
  
   
@@ -915,6 +977,33 @@ saveRDS(summ2, paste0(output_dir,"fit_summary_","temp","_",sp_ebird,".rds"))
 # 
 
 protocols <- summ2 %>% filter(grepl("protocol[",variable, fixed = TRUE))
+
+
+
+
+n_owls <- df_full %>% 
+  mutate(Survey = ifelse(dataset == "bbs",
+                         "BBS",
+                         "Nocturnal Owl Survey"),
+         Survey = factor(Survey,
+                         levels = rev(c("BBS","Nocturnal Owl Survey")),
+                         ordered = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(Survey) %>% 
+  summarise(n_surveys = n(),
+            n_sites = length(unique(route_id)),
+            n_non_zeros = length(which(count > 0))) %>% 
+  mutate(proportion_non_zero = round(n_non_zeros/n_surveys,2))
+
+ns_o <- n_owls %>% 
+  filter(Survey == "Nocturnal Owl Survey") 
+ns_b <- n_owls %>% 
+  filter(Survey == "BBS") 
+if(nrow(ns_b) == 0){
+  ns_b <- data.frame(n_surveys = 0,
+                     n_sites = 0,
+                     proportion_non_zero = NA)
+}
 
 
 pdf(paste0("figures/temp_fit_summary_",sp_ebird,".pdf"),
@@ -1134,7 +1223,7 @@ survey_sites <- df_full %>%
            crs = 4326)
 
 
-t_map <- ggplot()+
+t_map_long <- ggplot()+
   geom_sf(data = provs,
           fill = NA)+
   geom_sf(data = map_strat_trends,
@@ -1144,7 +1233,11 @@ t_map <- ggplot()+
           inherit.aes = FALSE,
           size = 0.05)+
   labs(title = paste(sp,"Trends across Canada, 1995-2024"),
-       caption = paste("Population trends from an integrated analysis of Nocturnal Owl Monitoring data and BBS"))+
+       subtitle = paste0(ns_o$n_sites," Nocturnal Owl Survey routes with ", ns_o$n_surveys, " surveys and species observed during ",ns_o$proportion_non_zero*100,"% \n",
+                         ns_b$n_sites, " BBS routes with ",ns_b$n_surveys," surveys and species observed during ",ns_b$proportion_non_zero*100,"%"),
+       caption = paste("Population trends from an integrated analysis of data from Nocturnal Owl Surveys and BBS\n",
+                       "using a spatially explicit model to estimate annual changes in counts within grid cells and\n",
+                       "eBird seasonal relative abundance in 2023 to weight local changes based on relative population size."))+
   coord_sf(xlim = bb[c("xmin","xmax")],
            ylim = bb[c("ymin","ymax")])+
   #scale_fill_viridis_c()+
@@ -1162,7 +1255,7 @@ t_map <- ggplot()+
 
 
 # pdf("temp.pdf")
- print(t_map)
+ print(t_map_long)
 # dev.off()
 
  
@@ -1209,7 +1302,7 @@ t_map <- ggplot()+
             crs = 4326)
  
  
- t_map <- ggplot()+
+ t_map_short <- ggplot()+
    geom_sf(data = provs,
            fill = NA)+
    geom_sf(data = map_strat_trends,
@@ -1219,7 +1312,11 @@ t_map <- ggplot()+
            inherit.aes = FALSE,
            size = 0.05)+
    labs(title = paste(sp,"Trends across Canada, 2010-2024"),
-        caption = paste("Population trends from an integrated analysis of Nocturnal Owl Monitoring data and BBS"))+
+        subtitle = paste0(ns_o$n_sites," Nocturnal Owl Survey routes with ", ns_o$n_surveys, " surveys and species observed during ",ns_o$proportion_non_zero*100,"% \n",
+                          ns_b$n_sites, " BBS routes with ",ns_b$n_surveys," surveys and species observed during ",ns_b$proportion_non_zero*100,"%"),
+        caption = paste("Population trends from an integrated analysis of data from Nocturnal Owl Surveys and BBS\n",
+                        "using a spatially explicit model to estimate annual changes in counts within grid cells and\n",
+                        "eBird seasonal relative abundance in 2023 to weight local changes based on relative population size."))+
    coord_sf(xlim = bb[c("xmin","xmax")],
             ylim = bb[c("ymin","ymax")])+
    #scale_fill_viridis_c()+
@@ -1237,32 +1334,8 @@ t_map <- ggplot()+
  
  
  # pdf("temp.pdf")
- print(t_map)
+ print(t_map_short)
  
- 
- n_owls <- df_full %>% 
-   mutate(Survey = ifelse(dataset == "bbs",
-                          "BBS",
-                          "Nocturnal Owl Survey"),
-          Survey = factor(Survey,
-                          levels = rev(c("BBS","Nocturnal Owl Survey")),
-                          ordered = TRUE)) %>% 
-   ungroup() %>% 
-   group_by(Survey) %>% 
-   summarise(n_surveys = n(),
-             n_sites = length(unique(route_id)),
-             n_non_zeros = length(which(count > 0))) %>% 
-   mutate(proportion_non_zero = round(n_non_zeros/n_surveys,2))
- 
- ns_o <- n_owls %>% 
-   filter(Survey == "Nocturnal Owl Survey") 
- ns_b <- n_owls %>% 
-   filter(Survey == "BBS") 
- if(nrow(ns_b) == 0){
-   ns_b <- data.frame(n_surveys = 0,
-                      n_sites = 0,
-                      proportion_non_zero = NA)
- }
  
  t_map <- ggplot()+
    geom_sf(data = provs,
@@ -1275,8 +1348,10 @@ t_map <- ggplot()+
            size = 0.2)+
    labs(title = paste0(sp," Survey routes contributing to trends"),
    subtitle = paste0(ns_o$n_sites," Nocturnal Owl Survey routes with ", ns_o$n_surveys, " surveys and species observed during ",ns_o$proportion_non_zero*100,"% \n",
-                     ns_b$n_sites, " BBS routes with ",ns_b$n_surveys," surveys and species observed during ",ns_b$proportion_non_zero,"%"),
-        caption = paste("Population trends from an integrated analysis of Nocturnal Owl Monitoring data and BBS"))+
+                     ns_b$n_sites, " BBS routes with ",ns_b$n_surveys," surveys and species observed during ",ns_b$proportion_non_zero*100,"%"),
+   caption = paste("Population trends from an integrated analysis of data from Nocturnal Owl Surveys and BBS\n",
+                   "using a spatially explicit model to estimate annual changes in counts within grid cells and\n",
+                   "eBird seasonal relative abundance in 2023 to weight local changes based on relative population size."))+
    coord_sf(xlim = bb[c("xmin","xmax")],
             ylim = bb[c("ymin","ymax")])+
    #scale_fill_viridis_c()+
@@ -1359,7 +1434,7 @@ ii_surv <- ii %>%
   filter(region == "survey_wide") 
 
 
-traj <- ggplot(data = ii_surv,
+traj_nat <- ggplot(data = ii_surv,
                aes(x = year, 
                    y = index))+
   #geom_point(aes(x = year, y = obs_mean))+
@@ -1379,10 +1454,13 @@ traj <- ggplot(data = ii_surv,
   ylab("Index of relative abundance")+
   xlab("")+
   labs(title = paste(sp,"Population trajectory for Canada"),
-             caption = paste("Population trajectory from an integrated analysis of Nocturnal Owl Monitoring data and BBS"))
+             caption = paste("Population trajectory from an integrated analysis of data from Nocturnal Owl Surveys and BBS\n",
+                             "using a spatially explicit model to estimate annual changes in counts within grid cells and\n",
+                             "eBird seasonal relative abundance in 2023 to weight local changes based on relative population size."))+
+  theme(plot.caption = element_text(hjust = 0))
 
 
-print(traj)
+print(traj_nat)
 
 
 
@@ -1432,8 +1510,23 @@ print(survey_map)
 dev.off()
 
 
+png(paste0(sp,"_Canada_trajectory.png"),
+    res = 300, height = 5, width = 8,
+    units = "in")
+print(traj_nat)
+dev.off()
 
+png(paste0(sp,"_Canada_trend_long.png"),
+    res = 300, height = 5, width = 8,
+    units = "in")
+print(t_map_long)
+dev.off()
 
+png(paste0(sp,"_Canada_trend_short.png"),
+    res = 300, height = 5, width = 8,
+    units = "in")
+print(t_map_short)
+dev.off()
 
 } #end species loop
 
