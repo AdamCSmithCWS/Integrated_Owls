@@ -912,6 +912,8 @@ save(list = c("stan_data",
 # Model fit ---------------------------------------------------------------
 
 
+trends_out <- NULL
+
 #re_fit <- FALSE
 for(sp in c("Great Horned Owl","Barred Owl","Northern Saw-whet Owl","Boreal Owl")[-1]){
  
@@ -1193,7 +1195,12 @@ tt <- trends$trends
 
 tt <- tt %>% 
   mutate(trends = cut(trend, breaks = c(-Inf, 
-                                        breaks, Inf), labels = labls))
+                                        breaks, Inf), labels = labls),
+         species = sp)
+
+
+trends_out <- bind_rows(tt,trends_out)
+
 
 country <- rnaturalearth::ne_countries(continent = "North America") %>%
   filter(admin %in% c("Canada")) %>%
@@ -1276,9 +1283,10 @@ t_map_long <- ggplot()+
  
  tt <- tt %>% 
    mutate(trends = cut(trend, breaks = c(-Inf, 
-                                         breaks, Inf), labels = labls))
+                                         breaks, Inf), labels = labls),
+          species = sp)
  
- 
+ trends_out <- bind_rows(tt,trends_out)
  
  map_strat_trends <- strata_used %>% 
    sf::st_intersection(country) %>% 
@@ -1510,19 +1518,19 @@ print(survey_map)
 dev.off()
 
 
-png(paste0("Figures/",sp,"_Canada_trajectory.png"),
+png(paste0("Figures/",sp_ebird,"_Canada_trajectory.png"),
     res = 300, height = 5, width = 8,
     units = "in")
 print(traj_nat)
 dev.off()
 
-png(paste0("Figures/",sp,"_Canada_trend_long.png"),
+png(paste0("Figures/",sp_ebird,"_Canada_trend_long.png"),
     res = 300, height = 5, width = 8,
     units = "in")
 print(t_map_long)
 dev.off()
 
-png(paste0("Figures/",sp,"_Canada_trend_short.png"),
+png(paste0("Figures/",sp_ebird,"_Canada_trend_short.png"),
     res = 300, height = 5, width = 8,
     units = "in")
 print(t_map_short)

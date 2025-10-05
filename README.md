@@ -16,20 +16,22 @@ The population trajectory information from each stratum (1x1 degree grid cells) 
 
 For Barred Owl, an example species with some data from both surveys, this integrated model estimates an overall increase in the species' population within the regions with monitoring data from one or both of these programs.
 
-![Population trajectory for Barred Owl across the regions of Canada with Nocturnal Owl Survey data. The narrowing the uncertainty interval in 2023 shows that the eBird relative abundance surface is assumed to have no uncertainty (this will change in future interations)](figures/Barred%20Owl_Canada_trajectory.png)
+![Population trajectory for Barred Owl across the regions of Canada with Nocturnal Owl Survey data. The narrowing the uncertainty interval in 2023 shows that the eBird relative abundance surface is assumed to have no uncertainty (this will change in future interations)](figures/brdowl_Canada_trajectory.png)
 
 The stratum level information on annual changes in relative abundance are estimated using a spatially explicit, hierarchical Bayesian model that shares information among neighbouring strata. This spatial neighbourhood structure (an instrinsic Conditional Auto-Regressive model), allows the local estimates of population change to vary if the data support that variation, but also provides some spatial smoothing of the estimated trends.The long-term trends for Barred Owl suggest the species has increased across almost all of its range
 
-![Long-term trends for Barred Owls.](figures/Barred%20Owl_Canada_trend_long.png)
+![Long-term trends for Barred Owls.](figures/brdowl_Canada_trend_long.png)
 
 More recently (since 2010) population trends vary more across the country.
 
-![Spatial variation in short-term trends for Barred Owl.](figures/Barred%20Owl_Canada_trend_short.png)
+![Spatial variation in short-term trends for Barred Owl.](figures/brdowl_Canada_trend_short.png)
 
 ### Boreal Owl
 
 The Nocturnal Owl Survey data can also estimate population trends and trajectories for species with no other suitable source of standardized monitoring data. For example, Boreal Owl is considered data deficient in the most recent State of Canada's Birds, but the Nocturnal Owl Survey data show the species population has decreased, and that decrease is largely driven by declines in Eastern Canada.
 
-![Population trajectory for Boreal Owls.](figures/Boreal%2Owl_Canada_trajectory.png)
+![Population trajectory for Boreal Owls.](figures/borowl_Canada_trajectory.png)
 
-![Population trends for Boreal Owls.](figures/Boreal%2Owl_Canada_trend_long.png)
+![Population trends for Boreal Owls.](figures/borowl_Canada_trend_long.png)
+
+
