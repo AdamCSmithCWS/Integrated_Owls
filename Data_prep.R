@@ -176,7 +176,8 @@ regs_maps <- list(country = country,
                   bcr_by_country = bcr_by_country)
 
 
-
+regen_map <- FALSE
+if(regen_map){
 event_map2 <- event_map %>% 
   #filter(min_year < 2016) %>% 
   st_transform(crs = st_crs(prov_state))
@@ -204,7 +205,7 @@ png(paste0("Figures/Nocturnal_owl_survey_routes.png"),
     units = "in")
 print(survey_map)
 dev.off()
-
+}
 # Species loop ------------------------------------------------------------
 
 
@@ -307,7 +308,7 @@ obs_w_zeros_bbs <- events_bbs %>%
 check_bbs_n_obs <- obs_w_zeros_bbs %>% 
   filter(count > 0) %>% 
   group_by(route_id) %>% 
-  summarise(n_years = length(unique(year))) %>% 
+  summarise(n_years = length(unique(year)))  %>% 
   filter(n_years > 1) ## ignore routes where species has been observed only once
 
 obs_w_zeros_bbs <- obs_w_zeros_bbs %>% 
@@ -915,7 +916,7 @@ save(list = c("stan_data",
 trends_out <- NULL
 
 #re_fit <- FALSE
-for(sp in c("Great Horned Owl","Barred Owl","Northern Saw-whet Owl","Boreal Owl")[-1]){
+for(sp in c("Great Horned Owl","Barred Owl","Northern Saw-whet Owl","Boreal Owl")){
  
   
 
@@ -929,12 +930,20 @@ load(paste0("data/pre_fit_data_",sp_ebird,".RData"))
 
 if(re_fit){
 
+  if(sp == "Great Horned Owl"){
+    ni <- 4000
+    th <- 4
+  }else{
+    ni <- 1000
+    th <- 1
+  }
 fit2 <- model$sample(data = stan_data,
                     parallel_chains = 4,
                     refresh = 500,
                     iter_warmup = 1000,
-                    iter_sampling = 1000,
-                    adapt_delta = 0.8,
+                    iter_sampling = ni,
+                    thin = th,
+                    adapt_delta = 0.9,
                     max_treedepth = 11,
                     show_exceptions = TRUE)
 
@@ -1537,4 +1546,13 @@ print(t_map_short)
 dev.off()
 
 } #end species loop
+
+
+write_csv(trends_out,"All_owl_trends.csv")
+
+trends_out_broad <- trends_out %>% 
+  filter(region_type != "strata_level")
+
+write_csv(trends_out_broad,"All_broad_scale_owl_trends.csv")
+
 
