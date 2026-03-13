@@ -7,8 +7,8 @@ library(ebirdst)
 library(SurveyCoverage)
 
 use_uncertainty <- FALSE
-re_ebird <- FALSE
-re_fit <- TRUE
+re_ebird <- TRUE
+# re_fit <- TRUE
 
 
 source("functions/checks.R")
@@ -27,7 +27,7 @@ output_dir <- "output/"
 
 # Load Owl Data -----------------------------------------------------------
 
-events_owl <- read_csv("data/owls/samplingEvents.csv")%>% 
+events_owl <- read_csv("data/owls2/samplingEvents.csv")%>% 
   distinct() %>% 
   mutate(unique_survey = paste(RouteIdentifier,survey_year,survey_month,survey_day, sep = "-")) %>% 
   arrange(unique_survey) %>% 
@@ -111,7 +111,7 @@ progr_summary <- events_owl %>%
 
 # owl observations --------------------------------------------------------
 
-obs_owl <- read_csv("data/owls/NationalOwlData.csv") %>% 
+obs_owl <- read_csv("data/owls2/NationalOwlData.csv") %>% 
   filter(RouteIdentifier != "NS050") %>%  # temporary removal of one problematic route that is replicated in two provinces%>% 
   mutate(unique_survey = paste(RouteIdentifier,survey_year,survey_month,survey_day, sep = "-"))
   
@@ -138,7 +138,7 @@ obs_owl <- read_csv("data/owls/NationalOwlData.csv") %>%
 # step through species to build full dataset with zero-fill
 
 # load all of the bbs data
-full_bbs <- bbsBayes2::load_bbs_data()
+full_bbs <- bbsBayes2::load_bbs_data(release = 2025)
 
 
 
@@ -208,8 +208,22 @@ dev.off()
 }
 # Species loop ------------------------------------------------------------
 
+owl_species <- obs_owl %>% 
+  group_by(CommonName) %>% 
+  summarise(n_years = length(unique(survey_year)),
+            n_routes = length(unique(RouteIdentifier)),
+            n_obs = length(which(Count > 0))) %>% 
+  arrange(n_obs)
 
-for(sp in c("Great Horned Owl","Barred Owl","Northern Saw-whet Owl","Boreal Owl")){
+
+owls_ebird <- ebirdst::get_species(owl_species$CommonName)
+
+
+ebird_owls_status <- ebirdst_runs[which(ebirdst_runs$species_code %in% owls_ebird),]
+
+for(sp in c("American Woodcock",
+            "Wilson's Snipe",
+            "Ruffed Grouse")){#owl_species$CommonName){
   
  #sp <- "Great Horned Owl"
   
@@ -246,6 +260,7 @@ for(sp in c("Great Horned Owl","Barred Owl","Northern Saw-whet Owl","Boreal Owl"
                           Count),
            dataset = "owl")
   
+
   check_owl_n_obs <- obs_w_zeros_owl %>% 
     filter(count > 0) %>% 
     group_by(RouteIdentifier) %>% 
@@ -258,10 +273,22 @@ for(sp in c("Great Horned Owl","Barred Owl","Northern Saw-whet Owl","Boreal Owl"
   
   
   
+  obs_check <- obs_w_zeros_owl %>% 
+    group_by(survey_year,StateProvince) %>% 
+    summarise(n_pos = length(which(count > 0)),
+              n_surveys = n())
 
 
 
-
+  if(sp %in% c("American Woodcock",
+               "Wilson's Snipe",
+               "Ruffed Grouse")){
+    obs_w_zeros_owl <- obs_w_zeros_owl %>% 
+      filter(survey_year > 2000,
+             !(survey_year < 2022 & StateProvince == "BCY"))
+    
+  }
+  
 
 
 
@@ -448,7 +475,8 @@ meta_years <- df_full %>%
   arrange(yr)
 
 if(nrow(meta_years) != max(meta_years$yr)){
-  stop("There is at least one year with no surveys.")
+  warning("There is at least one year with no surveys.")
+  next
 }
 
 df_bbs_final <- df_full %>% 
@@ -608,7 +636,7 @@ abd_seasonal_abundance_upper <- ebirdst::load_raster(species = sp_ebird,
                                                    resolution = "3km",
                                                    period = "seasonal",
                                                    product = "abundance",
-                                                   metric = metric_used)  #3km high resolution
+                                                   metric = "upper")  #3km high resolution
 
 breed_abundance_upper <- abd_seasonal_abundance_upper[[season]]
 
@@ -621,7 +649,7 @@ if(use_uncertainty){
   saveRDS(breed_abundance_lower,paste0("data/species_relative_abundance_2023/",sp_ebird,"_derived_breeding_relative_abundance_lower.rds"))
 }
 
-# Calculate mean relative abundance in each stratum -----------------------
+
 
 # both mean relative abundance in each of the full continental grid cell
 # mean relative abundance of surveyed population in each grid-cell included in the analysis (grid cells with data)
@@ -652,9 +680,11 @@ if(use_uncertainty){
 }
 
 
-strata_used_proj <-  st_transform(strata_used, st_crs(breed_abundance))
+strata_used_proj <-  st_transform(strata_used, st_crs(breed_abundance)) %>% 
+  st_make_valid()
   
-strata_map_proj <-  st_transform(strata_map, st_crs(breed_abundance))
+strata_map_proj <-  st_transform(strata_map, st_crs(breed_abundance)) %>% 
+  st_make_valid()
 
 abundance_in_strata <- terra::extract(breed_abundance,
                                       strata_map_proj,
@@ -909,6 +939,9 @@ save(list = c("stan_data",
               "cumulative_coverage",
               "sp_coverage"),
      file = paste0("data/pre_fit_data_",sp_ebird,".RData"))
+
+print(sp_ebird)
+
 }# end data prep species loop
 # Model fit ---------------------------------------------------------------
 
@@ -916,36 +949,45 @@ save(list = c("stan_data",
 trends_out <- NULL
 
 #re_fit <- FALSE
-for(sp in c("Great Horned Owl","Barred Owl","Northern Saw-whet Owl","Boreal Owl")){
+for(sp in c("American Woodcock",
+            "Wilson's Snipe",
+            "Ruffed Grouse")){#owl_species$CommonName){
  
   
 
   #sp_id <- unique(sp_obs_owl$species_id)
   sp_ebird <- ebirdst::get_species(sp)
  
-model <- cmdstanr::cmdstan_model("models/first_difference_spatial_owls_integrated.stan")
+model <- cmdstanr::cmdstan_model("models/first_difference_spatial_owls_integrated_sumzero.stan")
 
-
+if(!file.exists(paste0("data/pre_fit_data_",sp_ebird,".RData"))){
+  next
+}
 load(paste0("data/pre_fit_data_",sp_ebird,".RData"))
 
+if(any(is.na(stan_data$log_mean_rel_abund))){
+  stan_data$log_mean_rel_abund[which(is.na(stan_data$log_mean_rel_abund))] <-
+    mean(stan_data$log_mean_rel_abund,na.rm = TRUE)
+}
+re_fit <- TRUE
 if(re_fit){
 
-  if(sp == "Great Horned Owl"){
-    ni <- 4000
-    th <- 4
-  }else{
-    ni <- 1000
-    th <- 1
-  }
+  # if(sp == "Great Horned Owl"){
+    ni <- 2000
+    th <- 2
+  # }else{
+  #   ni <- 1000
+  #   th <- 1
+  # }
 fit2 <- model$sample(data = stan_data,
                     parallel_chains = 4,
                     refresh = 500,
                     iter_warmup = 1000,
                     iter_sampling = ni,
                     thin = th,
-                    adapt_delta = 0.9,
+                    adapt_delta = 0.95,
                     max_treedepth = 11,
-                    show_exceptions = TRUE)
+                    show_exceptions = FALSE)
 
 fit2$save_object(paste0(output_dir,"fit_","temp","_",sp_ebird,".rds"))
 
@@ -957,6 +999,39 @@ saveRDS(summ2, paste0(output_dir,"fit_summary_","temp","_",sp_ebird,".rds"))
   fit2 <- readRDS(paste0(output_dir,"fit_","temp","_",sp_ebird,".rds"))
   summ2 <- readRDS(paste0(output_dir,"fit_summary_","temp","_",sp_ebird,".rds"))
 }
+
+
+}
+
+
+trends_out <- NULL
+
+#re_fit <- FALSE
+for(sp in owl_species$CommonName){
+  
+  
+  
+  #sp_id <- unique(sp_obs_owl$species_id)
+  sp_ebird <- ebirdst::get_species(sp)
+  if(!file.exists(paste0("data/pre_fit_data_",sp_ebird,".RData"))){
+    next
+  }
+  load(paste0("data/pre_fit_data_",sp_ebird,".RData"))
+  
+  
+  fit2 <- readRDS(paste0(output_dir,"fit_","temp","_",sp_ebird,".rds"))
+  summ2 <- readRDS(paste0(output_dir,"fit_summary_","temp","_",sp_ebird,".rds"))
+  
+ 
+# 
+# library(bayesplot)
+# 
+# 
+# draws <- as_draws_array(fit2)
+# 
+# mcmc_pairs(draws, pars = c("OWL","BBS","protocol[1]","protocol[2]"),
+#            off_diag_args = list(size = 0.75))
+# 
 
 
 
@@ -987,7 +1062,6 @@ saveRDS(summ2, paste0(output_dir,"fit_summary_","temp","_",sp_ebird,".rds"))
 #          stratum = as.integer(str_extract(variable,"(?<=\\[)[[:digit:]]{1,}")))
 # 
 
-protocols <- summ2 %>% filter(grepl("protocol[",variable, fixed = TRUE))
 
 
 
@@ -1015,6 +1089,39 @@ if(nrow(ns_b) == 0){
                      n_sites = 0,
                      proportion_non_zero = NA)
 }
+
+
+
+obs_owls1 <- df_full %>% 
+  mutate(Survey = ifelse(dataset == "bbs",
+                         "BBS",
+                         "Nocturnal Owl Survey"),
+         Survey = factor(Survey,
+                         levels = rev(c("BBS","Nocturnal Owl Survey")),
+                         ordered = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(Survey,strata_name,stratum) %>%
+  summarise(max_obs = max(count))
+
+
+obs_owls <- df_full %>% 
+  mutate(Survey = ifelse(dataset == "bbs",
+                         "BBS",
+                         "Nocturnal Owl Survey"),
+         Survey = factor(Survey,
+                         levels = rev(c("BBS","Nocturnal Owl Survey")),
+                         ordered = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(Survey,strata_name,stratum,year) %>%
+  summarise(obs_y = mean(count),
+            n_surveys = n()) %>% 
+  left_join(obs_owls1,
+            by = c("Survey","strata_name","stratum")) %>% 
+  mutate(p_obsy = obs_y/max_obs) %>% 
+  ungroup() %>% 
+  group_by(strata_name,year) %>% 
+  summarise(mean_prop_obs = mean(p_obsy),
+            n_datasources = n())
 
 
 pdf(paste0("figures/temp_fit_summary_",sp_ebird,".pdf"),
@@ -1425,6 +1532,37 @@ print(a_map)
 
 
 ii <- indices$indices 
+yups <- ii %>% 
+  group_by(region) %>% 
+  summarise(yup = max(index_q_0.75))
+
+ii_strat <- indices$indices %>% 
+  filter(region_type == "strata_level") %>% 
+  left_join(obs_owls,
+            by = c("region" = "strata_name",
+                   "year")) %>% 
+  left_join(yups,
+            by = "region") %>% 
+  mutate(mean_prop_obs_plot = mean_prop_obs*yup)
+
+ii_test <- ggplot(data = ii_strat,
+                  aes(x = year, y = index))+
+  geom_line()+
+  geom_ribbon(aes(ymin = index_q_0.025,
+                  ymax = index_q_0.975),
+              alpha = 0.2)+
+  geom_point(aes(y = mean_prop_obs_plot))+
+  facet_wrap(vars(region),
+             scales = "free_y")
+
+
+ii_test
+
+amwo_tst <- df_full %>% 
+  group_by(protocol_id,dataset,)
+
+
+
 
 indices_map <- strata_used %>% 
   inner_join(ii,
@@ -1454,7 +1592,6 @@ ii_surv <- ii %>%
 traj_nat <- ggplot(data = ii_surv,
                aes(x = year, 
                    y = index))+
-  #geom_point(aes(x = year, y = obs_mean))+
   geom_ribbon(aes(ymin = index_q_0.05,
                   ymax = index_q_0.95),
               alpha = 0.3)+

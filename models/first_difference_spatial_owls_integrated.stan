@@ -168,6 +168,7 @@ transformed parameters {
     phi_owl = 0;
   }else{
     phi_bbs = 1/sqrt(sdnoise_bbs); //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+    ### The generic prior works much much better on the parameter you can use 1/sqrt(phi). This can be motivated by noticing you can write a negative binomial a y | g ~ Poisson(g*mu), g ~ gamma(phi,phi) and the standard deviation of g is 1/sqrt(phi). 
     phi_owl = 1/sqrt(sdnoise_owl); //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
   }
   
