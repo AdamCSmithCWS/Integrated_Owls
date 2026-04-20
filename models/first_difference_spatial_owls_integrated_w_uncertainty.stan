@@ -5,7 +5,6 @@
 
 
 
-
 data {
   
   ///BBS only data
@@ -35,6 +34,7 @@ data {
   vector[n_counts_owl] off_set; // site index
 
   vector[n_strata] log_mean_rel_abund; // log-transformed mean relative abund in stratum
+  vector[n_strata] log_mean_rel_abund_se; // log-transformed se of mean relative abund in stratum
 
   // a vector of zeros to fill fixed beta values for fixed_year
   vector[n_strata] zero_betas;
