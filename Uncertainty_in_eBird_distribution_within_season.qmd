@@ -1,0 +1,132 @@
+---
+title: "Some initial thoughts on accounting for uncertainty in estimates of the proportion of a population in a given region, derived from eBird status products"
+format: pdf
+editor: visual
+---
+
+
+```{r, echo=FALSE, message=FALSE,error=FALSE, warning=FALSE}
+library(tidyverse)
+library(ebirdst)
+library(sf)
+sp_ebird <- "brdowl"
+sp <- "Barred Owl"
+  
+load(paste0("data/pre_fit_data_",sp_ebird,".RData"))
+countries <- bbsBayes2::load_map("bbs") %>% 
+  filter(country %in% c("Canada")) %>% 
+  group_by(country) %>% 
+  summarise()
+
+strata <- bbsBayes2::load_map("latlong") %>% 
+  st_join(countries, left = FALSE)
+
+```
+
+
+## Rationale
+
+The eBird relative abundance surfaces can be used as data in models that estimate trends and abundances of birds across their range. Inference from those models would be improved if they could account for some aspects of the uncertainty in the relative abundance information.  
+
+For example, structured trend monitoring data such as the BBS, the American Woodcock Singing Ground Survey, Nocturnal Owl Monitoring programs, Marsh Monitoring Programs, and the Christmas Bird Count are particularly well designed to estimate changes in populations within and among a particular set of survey sites Their methods focus largely on controlling the observation conditions across repeated measures within a set of sample sites; however, the sample of survey sites are less well designed to estimate the relative abundance across the landscape. The inference on relative abundance is necessary to weight changes in populations in each region when calculating a composite estimate of changes in a broader regional population. Limits on access to a random or representative sample of the landscape for the survey sites (road networks, private land, etc.) make it more difficult to draw inferences about the relative abundance of species in a region based on variation in the mean observations at a collection of survey sites. Similarly, for some types of surveys, regional variations in the survey protocol (e.g., the playback recordings used for surveying owls vary across Canada to match the local species pool) make it impossible to assume that the mean counts in one region are comparable to mean counts in another region. 
+
+Similarly, models such as those in [Stillman et al. 2023](https://doi.org/10.1111/1365-2664.14512) and [Gahbauer et al. in press](https://github.com/AdamCSmithCWS/PIF_population_estimates) may similarly benefit from propagating some of the uncertainty in relative abundance information through to the conclusions about species' density across the landscape. 
+
+### Critical inference
+
+In the example use-cases above, the most critical aspect of uncertainty is the variation/uncertainty in the spatial pattern of relative abundance. Effectively, uncertainty in the proportion of the population within any given grid-cell. In both examples, the primary purpose of the relative abundance information is to describe the proportion of the population present during some fixed season (i.e., breeding season or survey season). Therefore, the variation among the weekly predictions in those proportions provides one accessible aspect of uncertainty that uniquely represents the uncertainty of the spatial pattern of abundance within that fixed season. 
+
+
+### Challenges/questions with the distribution of predictions across models in the ensemble
+
+
+The variation in predictions across the model ensemble within a given grid-cell (i.e., the aspect of uncertainty that is directly available through the eBirdst package) is a composite measure of both the variation in the spatial pattern of relative abundance as well as the uncertainty in the scale of the variation in abundance at a given location. These components cannot be disentangled (as far as I am aware). For any cell-specific estimate of variation among the models in the ensemble, it is not clear what proportion is due to variation in the predicted spatial pattern and what proportion is a due to the measures of relative abundance (expected count for a given effort level). In addition, given the necessary spatial sharing of information in each model of the ensemble, it is difficult to know how to propagate the uncertainty in a given grid-cell into a summary estimate of uncertainty across many grid-cells. Propagating all of the uncertainty among models in the ensemble would likely over estimate the uncertainty in the final estimates of composite trends or population size. In addition, although the 10th and 90th percentiles of the predictions from the ensemble are available, how would we translate those percentiles into a statistical distribution? The distribution of predictions across the ensemble may be approximately normal, although constrained to exclusively non-negative values. Perhaps they follow a log-normal distribution, which would ensure non-negative values, but this could also result in an unrealistically extreme upper limit to the distribution on the original scale.   
+
+## One possible approach
+
+To capture the variation in the spatial pattern of relative abundance within a fixed season, we can re-sample the weekly point-estimates of abundance surfaces (e.g., median) for the weeks that make up that season. Because each modeling example above assumes a fixed relationship between some structure survey data and the relative abundance surface, we could re-sample weeks using a sample probability that reflects the weekly distribution of the structured surveys. 
+
+For example, with the [Nocturnal Owl Survey](https://github.com/AdamCSmithCWS/Integrated_Owls), we are using the eBird relative abundance survey to provide a common scaling across multiple regionally varying survey protocols and while integrating with other structure monitoring data (e.g., the BBS). 
+
+For Barred Owl, within the 1-degree grid cells with long-term monitoring data, the broad-scale pattern in relative abundance is consistent (higher in the east and with peaks in Central Ontario and the maritime provinces, Figure 1). However, there is some variation in the spatial distribution of the species over these weeks, as the peak in Central Ontario is much less apparent later in the season, and the peak in the maritime provinces is higher later in the season. 
+
+The model is a Bayesian hierarchical trend model, similar to the models used for the BBS, CBC and Shorebird migration monitoring ([Smith et al. 2023](https://doi.org/10.1093/ornithapp/duad056)) that shares information on annual changes in abundance among 1-degree grid-cells in a spatially explicit way. 
+The model does not include a parameter that estimates abundance in each grid-cell, but instead has intercepts to adjust for survey protocol/method and individual survey sites (routes) and temporal component of the population trajectory is fixed at 1 (zero on the log-scale) in 2023 (the year of the relative abundance surface predictions). We estimate the full population trajectory as the expected mean count during an average Owl survey, with an average protocol, on an average route within each 1-degree grid-cell. 
+
+When calculating population trajectories for regions that include more than one, 1-degree grid-cell (e.g., inference for the entire monitored population), we weight the contribution of each grid-cell based on the proportion of the monitored population in that grid-cell. The weighting involves multiply the annual values of the population trajectory for each grid-cell by the proportion of the species population in the grid-cell and then summing the trajectory values across all grid-cells in the region to generate a regional population trajectory. We propagate the uncertainty by randomly re-sampling a weekly relative abundance surface (from the weeks with monitoring data), calculating the proportion of the regional population in each grid-cell during that week. Then we rerun this random sample of weeks for each posterior sample of the trajectory estimates. We select each random draw from among the possible weeks with a sample probability based on the distribution of surveys among weeks in the species' monitoring data (e.g., Figure 2). 
+
+
+```{r proportional maps,echo=FALSE,warning=FALSE,error=FALSE, message=FALSE, fig.height=7,fig.cap="Variation in estimates of the proportion of the monitored Barred Owl population in 1-degree grid cells in Canada with structured monitoring data, across a selection of weeks when structured monitoring surveys from the Nocturnal Owl Monitoring program and the North American Breeding Bird Survey are conducted. note: Monitored population = population within the grid-cells with monitoring data"}
+
+
+week_names <- names(select(prop_in_strata_used,starts_with("2023")))
+
+week_names <- data.frame(weeks = week_names,
+                         week = 1:length(week_names))
+
+prop_fun <- function(x){
+  y <- x/sum(x,na.rm = TRUE)
+}
+
+prop_in_strata_df <- prop_in_strata_used %>% 
+    pivot_longer(cols = starts_with("2023"),
+                 values_to = "prop_population",
+                 names_to = "week") 
+
+wks <- seq(from = 4, to = 22, length.out = 5)
+wksn <- week_names[wks,"weeks"]
+
+prop_in_strata_map <- strata_used %>% 
+  left_join(prop_in_strata_df) %>% 
+  ungroup() %>% 
+  filter(week %in% wksn)
+
+bb <- st_bbox(prop_in_strata_map)
+
+
+map <- ggplot()+
+  geom_sf(data = countries)+
+  geom_sf(data = prop_in_strata_map,
+          aes(fill = prop_population))+
+  coord_sf(xlim = bb[c("xmin","xmax")],
+           ylim = bb[c("ymin","ymax")])+
+  scale_fill_viridis_c(name = "Proportion of the\nmonitored population")+
+  facet_wrap(vars(week),
+             nrow = 5)+
+  theme_bw()+
+  theme(legend.position = "bottom")
+
+print(map)
+
+
+```
+
+
+
+
+```{r weekly histogram,echo=FALSE,warning=FALSE,error=FALSE, message=FALSE, fig.height=7, fig.cap="Distribution across weeks of monitoring surveys from the Nocturnal Owl Monitoring program and the North American Breeding Bird Survey. The range of weeks is large, but the majority of surveys were conducted in April or early May and a second peak during the BBS survey window in June. Note: the weeks are labeled based on the names of the weekly abundance estimates from eBird data, but the surveys were conducted in all years between 1995 and 2024 and grouped for this plot based on month and day of survey."}
+
+weeks_sample <- df_full %>% 
+   select(week) %>% 
+   drop_na() %>% 
+  left_join(week_names)
+
+week_plot <- ggplot(data = weeks_sample)+
+  geom_histogram(aes(x = weeks),
+                 stat = "count")+
+  ylab("Number of monitoring surveys")+
+  xlab("Weeks")+
+  theme_bw()+
+  theme(axis.text.x = element_text(size = 7,
+                                 angle = 90))
+
+print(week_plot)
+
+```
+
+
+
+With this re-sampling of weekly relative abundance surfaces, we can propagate some component of the uncertainty in a seasonal distribution. I am very interested in potential ways to also include some of the uncertainty within each week (e.g., the variation among predictions across the ensemble). 
+
+
+

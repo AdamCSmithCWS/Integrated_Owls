@@ -7,7 +7,7 @@ library(ebirdst)
 library(SurveyCoverage)
 
 use_uncertainty <- TRUE
-re_ebird <- TRUE
+re_ebird <- TRUE #should it re-download eBird
 # re_fit <- TRUE
 
 
@@ -25,13 +25,16 @@ output_dir <- "output/"
 # 
 # Routes that had less than 5 stops were considered incomplete and removed. The data were also filtered for routes that were run under appropriate survey conditions (temp, wind, precip), as specified in the survey protocol. If a route was run more than one per year, I have retained it. 
 
-# Load Owl Data -----------------------------------------------------------
+ year_end <- 2025
+ 
+ # Load Owl Data -----------------------------------------------------------
 
 events_owl <- read_csv("data/owls2/samplingEvents.csv")%>% 
   distinct() %>% 
   mutate(unique_survey = paste(RouteIdentifier,survey_year,survey_month,survey_day, sep = "-")) %>% 
   arrange(unique_survey) %>% 
-  filter(RouteIdentifier != "NS050") # temporary removal of one problematic route that is replicated in two provinces
+  filter(RouteIdentifier != "NS050",
+         survey_year <= year_end) # temporary removal of one problematic route that is replicated in two provinces
 
 # sel <- c(which(duplicated(events_owl$unique_survey))-1,
 #          which(duplicated(events_owl$unique_survey)),
@@ -206,14 +209,14 @@ png(paste0("Figures/Nocturnal_owl_survey_routes.png"),
 print(survey_map)
 dev.off()
 }
-# Species loop ------------------------------------------------------------
 
 owl_species <- obs_owl %>% 
   group_by(CommonName) %>% 
   summarise(n_years = length(unique(survey_year)),
             n_routes = length(unique(RouteIdentifier)),
             n_obs = length(which(Count > 0))) %>% 
-  arrange(n_obs)
+  arrange(n_obs) %>% 
+  filter(n_years > 24) # must have observations for 25 years (2001 through 2025)
 
 
 owls_ebird <- ebirdst::get_species(owl_species$CommonName)
@@ -221,9 +224,15 @@ owls_ebird <- ebirdst::get_species(owl_species$CommonName)
 
 ebird_owls_status <- ebirdst_runs[which(ebirdst_runs$species_code %in% owls_ebird),]
 
-for(sp in c("American Woodcock",
-            "Wilson's Snipe",
-            "Ruffed Grouse")){#owl_species$CommonName){
+
+
+
+
+
+# Species loop ------------------------------------------------------------
+
+
+for(sp in owl_species$CommonName){
   
  #sp <- "Barred Owl"
   
@@ -449,7 +458,7 @@ df_full <- df_full %>%
 
 # filter out strata that don't meet minimum-span criterion ----------------
 
-min_span <- 15 #minimum number of years with surveys
+min_span <- 20 #minimum number of years with surveys
 
 strata_span <- df_full %>% 
   group_by(strata_name) %>% 
@@ -584,7 +593,7 @@ down <- try(ebirdst::ebirdst_download_status(sp_ebird,
                                              pattern = "abundance_(median|upper|lower)_3km"),
             silent = TRUE)
 
-
+}
 
 # if(use_uncertainty){
 #   down_lower <- try(ebirdst::ebirdst_download_status(sp_ebird,
@@ -644,34 +653,34 @@ breed_abundance <- abd_seasonal_abundance[[weeks_keep]]
 doy_weeks_keep <- c((yday(weeks_keep)-3),(yday(weeks_keep)[length(weeks_keep)]+4))
 
 
-if(use_uncertainty){
-
- 
-  
-abd_seasonal_abundance_lower <- ebirdst::load_raster(species = sp_ebird,
-                                               resolution = "3km",
-                                               product = "abundance",
-                                               metric = "lower")  #3km high resolution
-
-breed_abundance_lower <- abd_seasonal_abundance_lower[[weeks_keep]]
-
-
-abd_seasonal_abundance_upper <- ebirdst::load_raster(species = sp_ebird,
-                                                   resolution = "3km",
-                                                   product = "abundance",
-                                                   metric = "upper")  #3km high resolution
-
-breed_abundance_upper <- abd_seasonal_abundance_upper[[weeks_keep]]
-
-}
+# if(use_uncertainty){
+# 
+#  
+#   
+# abd_seasonal_abundance_lower <- ebirdst::load_raster(species = sp_ebird,
+#                                                resolution = "3km",
+#                                                product = "abundance",
+#                                                metric = "lower")  #3km high resolution
+# 
+# breed_abundance_lower <- abd_seasonal_abundance_lower[[weeks_keep]]
+# 
+# 
+# abd_seasonal_abundance_upper <- ebirdst::load_raster(species = sp_ebird,
+#                                                    resolution = "3km",
+#                                                    product = "abundance",
+#                                                    metric = "upper")  #3km high resolution
+# 
+# breed_abundance_upper <- abd_seasonal_abundance_upper[[weeks_keep]]
+# 
+# }
 
 saveRDS(breed_abundance,paste0("data/species_relative_abundance_",yr_ebird,"/",sp_ebird,"_derived_breeding_weekly_relative_abundance.rds"))
 
-if(use_uncertainty){
-  saveRDS(breed_abundance_upper,paste0("data/species_relative_abundance_",yr_ebird,"/",sp_ebird,"_derived_breeding_weekly_relative_abundance_upper.rds"))
-  saveRDS(breed_abundance_lower,paste0("data/species_relative_abundance_",yr_ebird,"/",sp_ebird,"_derived_breeding_weekly_relative_abundance_lower.rds"))
-}
-
+# if(use_uncertainty){
+#   saveRDS(breed_abundance_upper,paste0("data/species_relative_abundance_",yr_ebird,"/",sp_ebird,"_derived_breeding_weekly_relative_abundance_upper.rds"))
+#   saveRDS(breed_abundance_lower,paste0("data/species_relative_abundance_",yr_ebird,"/",sp_ebird,"_derived_breeding_weekly_relative_abundance_lower.rds"))
+# }
+# 
 
 
 # both mean relative abundance in each of the full continental grid cell
@@ -717,10 +726,13 @@ strata_map_proj <-  st_transform(strata_map, st_crs(breed_abundance)) %>%
   # abund_tmp <- breed_abundance[[w]]
   # abund_tmp <- terra::crop(abund_tmp, region_boundary_proj) |>
   #   terra::mask(region_boundary_proj)
-rep_zeros <- function(x){
-  min_x <- min(x[which(x>0)])
-  y <- ifelse(x == 0,min_x*0.5,
+replace_zeros <- function(x){
+  min_x <- min(x[which(x>0)],na.rm = TRUE)
+  y <- ifelse(x == 0,min_x*0.5, # currently forces a non-zero abundance value that is half of the lowest positive abundance
               x)
+  y <- ifelse(is.na(y),
+              min_x*0.1, # also forces a non-zero abundance value that is 1/10th of the lowest positive abundance if missing, but also has monitoring observations
+              y)
   return(y)
 } 
 
@@ -733,21 +745,20 @@ rep_zeros <- function(x){
     mutate(strata_name = strata_used_proj$strata_name,
            stratum = strata_used_proj$stratum,
            across(.cols = starts_with(as.character(yr_ebird)),
-                  .fns = ~rep_zeros(.x))) 
+                  .fns = ~replace_zeros(.x))) # forces a non-zero abundance value for regions with monitoring data
+  
+
+  prop_in_strata_used <- abundance_in_strata_used_wide %>% 
+    mutate(across(.cols = starts_with(as.character(yr_ebird)),
+                  .fns = ~.x/sum(.x,na.rm = TRUE))) %>% 
+    arrange(stratum)
   
   abundance_in_strata_used <- abundance_in_strata_used_wide %>% 
     pivot_longer(cols = starts_with(as.character(yr_ebird)),
                  values_to = "rel_abundance",
                  names_to = "week") %>% 
     group_by(week) %>% 
-    mutate(prop_population = rel_abundance/sum(rel_abundance,na.rm = TRUE))
-  
-  prop_in_strata_used <- abundance_in_strata_used_wide %>% 
-    mutate(across(.cols = starts_with(as.character(yr_ebird)),
-                  .fns = ~.x/sum(.x,is.na = TRUE))) %>% 
-    arrange(stratum)
-  
-  abundance_in_strata_used_df <- abundance_in_strata_used %>% 
+    mutate(prop_population = rel_abundance/sum(rel_abundance,na.rm = TRUE)) %>% 
     ungroup() %>% 
     group_by(strata_name,stratum) %>% 
     summarise(mean_rel_abundance = mean(rel_abundance),
@@ -764,34 +775,67 @@ rep_zeros <- function(x){
            cv_prop_population = sd_prop_population/mean_prop_population)
   
   
-  tst <- ggplot(data = abundance_in_strata_used_df,
-                aes(x = stratum,y = median_prop_population))+
-    geom_pointrange(aes(ymin = min_prop_population,
-                        ymax = max_prop_population))
-  tst
-  
+
+# Abundance in all strata -------------------------------------------------
 
   
-  tst2 <- ggplot(data = abundance_in_strata_used_df,
-                aes(x = stratum,y = median_rel_abundance))+
-    geom_pointrange(aes(ymin = min_rel_abundance,
-                        ymax = max_rel_abundance))
-  tst2
   
+  
+  abundance_in_strata <- terra::extract(breed_abundance,
+                                                  strata_map_proj,
+                                                  fun = sum,
+                                                  na.rm = TRUE,
+                                                  ID = FALSE,
+                                                  exact = TRUE) %>% 
+    mutate(strata_name = strata_map_proj$strata_name) %>% 
+    pivot_longer(cols = starts_with(as.character(yr_ebird)),
+                 values_to = "rel_abundance",
+                 names_to = "week") %>% 
+    group_by(week) %>% 
+    mutate(prop_population = rel_abundance/sum(rel_abundance,na.rm = TRUE)) %>% 
+    ungroup() %>% 
+    group_by(strata_name) %>% 
+    summarise(mean_rel_abundance = mean(rel_abundance),
+              median_rel_abundance = median(rel_abundance),
+              min_rel_abundance = min(rel_abundance),
+              max_rel_abundance = max(rel_abundance),
+              sd_rel_abundance = sd(rel_abundance),
+              mean_prop_population = mean(prop_population),
+              median_prop_population = median(prop_population),
+              min_prop_population = min(prop_population),
+              max_prop_population = max(prop_population),
+              sd_prop_population = sd(prop_population)) %>% 
+    mutate(cv_rel_abundance = sd_rel_abundance/median_rel_abundance,
+           cv_prop_population = sd_prop_population/mean_prop_population)
+  
+  
+  # tst <- ggplot(data = abundance_in_strata_used_df,
+  #               aes(x = stratum,y = median_prop_population))+
+  #   geom_pointrange(aes(ymin = min_prop_population,
+  #                       ymax = max_prop_population))
+  # tst
+  # 
+  # 
+  # 
+  # tst2 <- ggplot(data = abundance_in_strata_used_df,
+  #               aes(x = stratum,y = median_rel_abundance))+
+  #   geom_pointrange(aes(ymin = min_rel_abundance,
+  #                       ymax = max_rel_abundance))
+  # tst2
+  # 
   
   df_full <- df_full %>% 
     mutate(week = as.integer(cut(doy,breaks = doy_weeks_keep)))
-  
-  weeks_sample <- df_full %>% 
-    select(week) %>% 
-    drop_na() %>% 
-    slice_sample(n = 1000) %>% 
-    unlist() %>% 
-    unname()
-  
-  nweeks <- ncol(prop_in_strata_used)-2
-  
-  
+  # 
+  # weeks_sample <- df_full %>% 
+  #   select(week) %>% 
+  #   drop_na() %>% 
+  #   slice_sample(n = 1000) %>% 
+  #   unlist() %>% 
+  #   unname()
+  # 
+  # nweeks <- ncol(prop_in_strata_used)-2
+  # 
   #}else{
   # 
   # 
@@ -911,8 +955,6 @@ stan_data <- list(n_sites_owl = max(df_owl_final$route),
                   n_strata = max(df_full$stratum),
                   n_years = max(df_full$yr),
                   n_protocols = max(df_owl_final$protocol),
-                  n_weeks = nweeks,
-                  n_weeks_sample = length(weeks_sample),
                   ebird_year = yr_ebird-(min(df_full$year)-1),
                   yrev = seq(from = (yr_ebird-(min(df_full$year))),to = 1, by = -1),
                   
@@ -940,10 +982,6 @@ stan_data <- list(n_sites_owl = max(df_owl_final$route),
                   train_owl = 1:nrow(df_owl_final),
                   test_owl = 1,
                   
-                  rel_abund = t(as.matrix(select(prop_in_strata_used,
-                                     -c(stratum,strata_name)))),
-                  weeks_sample = weeks_sample,
-                  
                   zero_betas = rep(0,max(df_full$stratum)),
                   
                   n_edges = neighbours$N_edges,
@@ -960,14 +998,13 @@ stan_data <- list(n_sites_owl = max(df_owl_final$route),
 )
 
 for(j in names(stan_data)){
-  if(!j %in% c("rel_abund",
-              "off_set")){
+  if(!j %in% c("off_set")){
     stan_data[[j]] <- as.integer(stan_data[[j]])
   }
 }
 
 
-do_coverage <- FALSE
+do_coverage <- TRUE
 
 if(do_coverage){
 # coverage comparison -----------------------------------------------------
@@ -1062,7 +1099,10 @@ save(list = c("stan_data",
               "df_bbs_final",
               "ann_coverage",
               "cumulative_coverage",
-              "sp_coverage"),
+              "sp_coverage",
+              "prop_in_strata_used",
+              "abundance_in_strata_used",
+              "abundance_in_strata"),
      file = paste0("data/pre_fit_data_",sp_ebird,".RData"))
 
 print(sp_ebird)
@@ -1071,19 +1111,15 @@ print(sp_ebird)
 # Model fit ---------------------------------------------------------------
 
 
-trends_out <- NULL
-
 #re_fit <- FALSE
-for(sp in c("American Woodcock",
-            "Wilson's Snipe",
-            "Ruffed Grouse")){#owl_species$CommonName){
+for(sp in owl_species$CommonName){
  
   
 
   #sp_id <- unique(sp_obs_owl$species_id)
   sp_ebird <- ebirdst::get_species(sp)
  
-model <- cmdstanr::cmdstan_model("models/first_difference_spatial_owls_integrated_count_scale.stan")
+model <- cmdstanr::cmdstan_model("models/first_difference_spatial_owls_integrated_no_scale.stan")
 
 if(!file.exists(paste0("data/pre_fit_data_",sp_ebird,".RData"))){
   next
@@ -1129,10 +1165,14 @@ saveRDS(summ2, paste0(output_dir,"fit_summary_","new_scale","_",sp_ebird,".rds")
 }
 
 
+
+# explore results ---------------------------------------------------------
+
+
 trends_out <- NULL
 
 #re_fit <- FALSE
-for(sp in owl_species$CommonName){
+for(sp in owl_species$CommonName[1:3]){
   
   
   
@@ -1256,7 +1296,6 @@ pdf(paste0("figures/new_fit_summary_",sp_ebird,".pdf"),
 
 
 
-# explore results ---------------------------------------------------------
 breaks <- c(-7, -4, -2, -1, -0.5, 0.5, 1, 2, 4, 7)
 labls <- c(paste0("< ", breaks[1]), paste0(breaks[-c(length(breaks))], 
                                            ":", breaks[-c(1)]), paste0("> ", breaks[length(breaks)]))
@@ -1304,7 +1343,8 @@ indices <- generate_indices(model_fit = fit2,
                             drop_exclude = FALSE,
                             hpdi = TRUE,
                             quiet = FALSE,
-                           weighted = TRUE)
+                            weighted = FALSE,
+                            rel_abundance_weights = prop_in_strata_used)
 
 
 tt_all <- NULL
