@@ -17,8 +17,7 @@ data {
   int<lower=1> n_strata;
   int<lower=1> n_protocols;
   int<lower=1> ebird_year; // index of year for the eBird relative abundance surface
-  int<lower=1> n_weeks;
-  int<lower=1> n_weeks_sample;
+
   
   array[ebird_year-1] int<lower=1> yrev; // reverse year vector (ebird_year-1):1 (necessary for Stan indexing)
   
@@ -37,12 +36,6 @@ data {
   
   vector[n_counts_owl] off_set; // site index
 
-  array[n_weeks] vector[n_strata] rel_abund; // mean relative abund in stratum
-  array[n_weeks_sample] int<lower=1> weeks_sample; // mean relative abund in stratum
-  
-  // scaling factor to ensure that the annual indices approximate mean observed counts
-  real<lower=0> scaling; // approximate total number of birds observed each year
-  
   // a vector of zeros to fill fixed beta values for fixed_year
   vector[n_strata] zero_betas;
   //array[n_years_m1] int<lower=0> y_2020; //indicators for 2020 = 0 if 2020 and missing if fixed_year
@@ -322,12 +315,8 @@ if(use_pois){
 
    vector[n_counts_owl*calc_log_lik] log_lik_owl; // alternative value to track the observervation level log-likelihood
    vector[n_test_owl*calc_cv] log_lik_cv_owl; // alternative value to track the log-likelihood of the coutns in the test dataset
-   int<lower=1,upper=n_weeks> week_sel;
-   vector[n_strata] rel_abund_sel;
-   
-   week_sel = weeks_sample[discrete_range_rng(1,n_weeks_sample)];
-   rel_abund_sel = rel_abund[week_sel,];
-  
+
+
   if(calc_log_lik){
   // potentially useful for estimating loo-diagnostics, such as looic
   if(use_pois){
@@ -417,17 +406,17 @@ for(i in 1:n_train_bbs){
   
    
 
-// Annual indices of abundance - strata-level annual predicted counts
+// Annual indices of abundance - strata-level annual predicted counts for an average owl survey with 10 stops
 
 
 for(y in 1:n_years){
 
       for(s in 1:n_strata){
 
-      n[s,y] = exp(yeareffect[s,y] + OWL) * rel_abund_sel[s] * scaling;
+      n[s,y] = exp(yeareffect[s,y] + OWL + (0.5*(sdste_owl^2)))*10; // *10 to adjust for the most common exp(offset) value = 10 stops per OWL route
         }
 
-      Hyper_N[y] = exp(YearEffect[y] + OWL);
+      Hyper_N[y] = exp(YearEffect[y] + OWL + (0.5*(sdste_owl^2)))*10;
       
 
     }

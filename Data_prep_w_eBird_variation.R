@@ -1172,7 +1172,7 @@ saveRDS(summ2, paste0(output_dir,"fit_summary_","new_scale","_",sp_ebird,".rds")
 trends_out <- NULL
 
 #re_fit <- FALSE
-for(sp in owl_species$CommonName[1:3]){
+for(sp in owl_species$CommonName){
   
   
   
@@ -1286,7 +1286,47 @@ obs_owls <- df_full %>%
   ungroup() %>% 
   group_by(strata_name,year) %>% 
   summarise(mean_prop_obs = mean(p_obsy),
-            n_datasources = n())
+            n_datasources = n(),
+            datasources = paste(unique(Survey),
+                                collapse = "-"))
+
+
+
+
+
+obs_owls1 <- df_full %>% 
+  left_join(alt_regs) %>% 
+  mutate(Survey = ifelse(dataset == "bbs",
+                         "BBS",
+                         "Nocturnal Owl Survey"),
+         Survey = factor(Survey,
+                         levels = rev(c("BBS","Nocturnal Owl Survey")),
+                         ordered = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(Survey,survey_region) %>%
+  summarise(max_obs = max(count))
+
+obs_owls_region <- df_full %>% 
+  left_join(alt_regs) %>% 
+  mutate(Survey = ifelse(dataset == "bbs",
+                         "BBS",
+                         "Nocturnal Owl Survey"),
+         Survey = factor(Survey,
+                         levels = rev(c("BBS","Nocturnal Owl Survey")),
+                         ordered = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(Survey,survey_region,year) %>%
+  summarise(obs_y = mean(count),
+            n_surveys = n()) %>% 
+  left_join(obs_owls1,
+            by = c("Survey","survey_region")) %>% 
+  mutate(p_obsy = obs_y/max_obs) %>% 
+  ungroup() %>% 
+  group_by(survey_region,year) %>% 
+  summarise(mean_prop_obs = mean(p_obsy),
+            n_datasources = n(),
+            datasources = paste(unique(Survey),
+                                collapse = "-"))
 
 
 pdf(paste0("figures/new_fit_summary_",sp_ebird,".pdf"),
@@ -1686,6 +1726,9 @@ t_map_long <- ggplot()+
 # print(ch_map_do)
 
 
+# mapping abundance -------------------------------------------------------
+
+
 
 a_map <- ggplot()+
   geom_sf(data = map_strat_trends,
@@ -1694,6 +1737,9 @@ a_map <- ggplot()+
 
 
 print(a_map)
+
+
+# trajectories ------------------------------------------------------------
 
 
 ii <- indices$indices 
@@ -1716,17 +1762,14 @@ ii_test <- ggplot(data = ii_strat,
   geom_ribbon(aes(ymin = index_q_0.025,
                   ymax = index_q_0.975),
               alpha = 0.2)+
-  geom_point(aes(y = mean_prop_obs_plot))+
+  #geom_point(aes(y = mean_prop_obs_plot))+
+  geom_point(aes(y = obs_mean, colour = n_routes, shape = datasources))+
+  scale_colour_viridis_b(breaks = c(1,2,3,5,10,16))+
   facet_wrap(vars(region),
              scales = "free_y")
 
 
-ii_test
-
-amwo_tst <- df_full %>% 
-  group_by(protocol_id,dataset,)
-
-
+print(ii_test)
 
 
 indices_map <- strata_used %>% 
@@ -1784,8 +1827,28 @@ print(traj_nat)
 
 
 ii_regs <- ii %>% 
-  filter(region_type == "survey_region")
+  filter(region_type == "survey_region") %>% 
+  left_join(obs_owls_region,
+            by = c("region" = "survey_region",
+                   "year")) %>% 
+  left_join(yups,
+            by = "region") %>% 
+  mutate(mean_prop_obs_plot = mean_prop_obs*yup)
 
+traj_test <- ggplot(data = ii_regs,
+                  aes(x = year, y = index))+
+  geom_line()+
+  geom_ribbon(aes(ymin = index_q_0.025,
+                  ymax = index_q_0.975),
+              alpha = 0.2)+
+  #geom_point(aes(y = mean_prop_obs_plot))+
+  geom_point(aes(y = obs_mean, colour = n_routes, shape = datasources))+
+  scale_colour_viridis_c()+#b(breaks = c(1,2,3,5,10,16))+
+  facet_wrap(vars(region),
+             scales = "free_y")
+
+
+print(traj_test)
 
 
 traj <- ggplot(data = ii_regs,

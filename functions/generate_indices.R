@@ -14,14 +14,14 @@ generate_indices <- function(
     drop_exclude = FALSE,
     hpdi = FALSE,
     quiet = FALSE,
-    weighted = FALSE) {
+    weighted = FALSE,
+    rel_abundance_weights = NULL) {
   
   # Checks
   check_numeric(quantiles)
   check_numeric(start_year, max_backcast, allow_null = TRUE)
   check_logical(drop_exclude, quiet, hpdi)
-  
-  # Get data
+ # Get data
 
   if(! "weights" %in% names(meta_strata)){
     meta_strata <- meta_strata %>% 
@@ -68,6 +68,19 @@ meta_strata <- meta_strata %>%
                         meta_strata = meta_strata,
                         meta_years = meta_years,
                         years_to_keep = start_year:end_year)
+  
+  rel_abund <- rel_abundance_weights %>% 
+    dplyr::arrange(stratum)
+  weeks_sample <- raw_data %>% 
+    dplyr::select(week) %>% 
+    drop_na() %>% 
+    dplyr::slice_sample(n = dim(n)[1],
+                        replace = TRUE)
+  
+  weight_array <- as.matrix(t(rel_abund[,weeks_sample$week]))
+  dimnames(weight_array) <- dimnames(n)[1:2]
+
+  
   
   # Meta strata data
   meta_strata <- meta_strata %>%
@@ -116,14 +129,13 @@ meta_strata <- meta_strata %>%
   n_routes_total <- raw_data_sel %>%
     dplyr::select("stratum", "route_id", "count") %>%
     dplyr::group_by(.data$stratum) %>% 
-    dplyr::summarize(n_routes_total = length(unique(route_id)),
-                     obs_mean_stratum = mean(count), .groups = "drop")
+    dplyr::summarize(n_routes_total = length(unique(route_id)), .groups = "drop")
   
   obs_strata <- obs_strata %>% 
     dplyr::inner_join(n_routes_total,
-                      by = "stratum") %>% 
-    dplyr::mutate(obs_mean = obs_mean/obs_mean_stratum) ## obs_mean is a proportion value, proportion of this year's mean count relative to the mean count across all years in the stratum
-  
+                       by = "stratum") #%>% 
+    # dplyr::mutate(obs_mean = obs_mean) ## obs_mean is a proportion value, proportion of this year's mean count relative to the mean count across all years in the stratum
+    # 
   indices <- dplyr::tibble()
   N_all <- list()
   
@@ -199,10 +211,12 @@ meta_strata <- meta_strata %>%
       dplyr::group_by(.data$strata_included, .data$strata_excluded,
                       .add = TRUE) %>%
       dplyr::summarize(
-        dplyr::across(.cols = c("obs_mean", "n_routes",
+        dplyr::across(.cols = c("n_routes",
                                 "n_routes_total",
                                 "n_non_zero", "flag_year"),
                       ~ sum(.x, na.rm = TRUE)),
+        dplyr::across(.cols = c("obs_mean"),
+                      ~ mean(.x, na.rm = TRUE)),
         .groups = "drop")
     
     
@@ -216,7 +230,7 @@ meta_strata <- meta_strata %>%
       # Create back up col for use in calculations
       tidyr::nest(data = -dplyr::any_of(rr)) %>%
       dplyr::group_by(.data[[rr]]) %>%
-      dplyr::summarize(N = purrr::map(.data$data, calc_weights, .env$n_sub, .env$meta_strata_sub),
+      dplyr::summarize(N = purrr::map(.data$data, calc_weights, .env$n_sub, .env$meta_strata_sub, .env$weight_array),
                        N_names = paste0(rr, "_", .data[[rr]]),
                        Q = purrr::map(.data$N, calc_quantiles,
                                       .env$quantiles)) %>%
@@ -244,7 +258,6 @@ meta_strata <- meta_strata %>%
                     "index", dplyr::contains("index_q"),
                     "obs_mean", "n_routes", "n_routes_total", "n_non_zero",
                     "backcast_flag") %>%
-      dplyr::mutate(obs_mean = mean(index)*obs_mean) %>% 
       dplyr::bind_rows(indices, .)
   }
   
@@ -357,15 +370,16 @@ samples_to_array <- function(model_fit, alternate_n, years_to_keep,
 
 
 
-calc_weights <- function(data, n, meta_strata_sub) {
+calc_weights <- function(data, n, meta_strata_sub, weight_array) {
   
   # Weight each sampled n
   n_weight <- n[, data$strata_name, , drop = FALSE]
-  
+  weight_sub <- weight_array[,data$strata_name, drop = FALSE]
+  weight_sub <- weight_sub/rowSums(weight_sub)
   # Use numbers for indexing as is slightly faster
   for (i in seq_len(dim(n_weight)[1])) {       # iter
     for (j in seq_len(dim(n_weight)[2])) {     # strata_name
-      n_weight[i, j, ] <- n_weight[i, j, ] * meta_strata_sub$area_weight_non_zero[j]
+      n_weight[i, j, ] <- n_weight[i, j, ] * weight_sub[i,j] * meta_strata_sub$area_weight_non_zero[j]
       
     }
   }
