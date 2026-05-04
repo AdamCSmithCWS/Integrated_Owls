@@ -26,15 +26,16 @@ output_dir <- "output/"
 # Routes that had less than 5 stops were considered incomplete and removed. The data were also filtered for routes that were run under appropriate survey conditions (temp, wind, precip), as specified in the survey protocol. If a route was run more than one per year, I have retained it. 
 
  year_end <- 2025
- 
+ year_start <- 2000
  # Load Owl Data -----------------------------------------------------------
 
 events_owl <- read_csv("data/owls2/samplingEvents.csv")%>% 
   distinct() %>% 
   mutate(unique_survey = paste(RouteIdentifier,survey_year,survey_month,survey_day, sep = "-")) %>% 
   arrange(unique_survey) %>% 
-  filter(RouteIdentifier != "NS050",
-         survey_year <= year_end) # temporary removal of one problematic route that is replicated in two provinces
+  filter(RouteIdentifier != "NS050", # temporary removal of one problematic route that is replicated in two provinces
+         survey_year <= year_end, # exclude 2026
+         survey_year >= year_start) #only since 2000
 
 # sel <- c(which(duplicated(events_owl$unique_survey))-1,
 #          which(duplicated(events_owl$unique_survey)),
@@ -216,7 +217,7 @@ owl_species <- obs_owl %>%
             n_routes = length(unique(RouteIdentifier)),
             n_obs = length(which(Count > 0))) %>% 
   arrange(n_obs) %>% 
-  filter(n_years > 24) # must have observations for 25 years (2001 through 2025)
+  filter(n_years > 24) # species must have observations for 25 years (2001 through 2025)
 
 
 owls_ebird <- ebirdst::get_species(owl_species$CommonName)
@@ -307,7 +308,7 @@ for(sp in owl_species$CommonName){
 sp_aou <- as.integer(bbsBayes2::search_species(sp)["aou"])
 
 obs_bbs <- full_bbs$birds %>% 
-  filter(year >= min(obs_w_zeros_owl$survey_year),
+  filter(year >= min(obs_w_zeros_owl$survey_year), # only include BBS data from years with owl data
          country_num == 124,
          aou == sp_aou) %>% # Canada only  
   mutate(route_id = paste(state_num,route,sep = "-")) %>% 
@@ -1113,8 +1114,8 @@ print(sp_ebird)
 
 #re_fit <- FALSE
 for(sp in owl_species$CommonName){
- 
-  
+
+# for(sp in fail$species){  
 
   #sp_id <- unique(sp_obs_owl$species_id)
   sp_ebird <- ebirdst::get_species(sp)
@@ -1134,8 +1135,8 @@ re_fit <- TRUE
 if(re_fit){
 
   # if(sp == "Great Horned Owl"){
-    ni <- 2000
-    th <- 2
+    ni <- 6000
+    th <- 6
   # }else{
   #   ni <- 1000
   #   th <- 1
@@ -1143,7 +1144,7 @@ if(re_fit){
 fit2 <- model$sample(data = stan_data,
                     parallel_chains = 4,
                     refresh = 500,
-                    iter_warmup = 1000,
+                    iter_warmup = 3000,
                     iter_sampling = ni,
                     thin = th,
                     adapt_delta = 0.95,
@@ -1170,6 +1171,7 @@ saveRDS(summ2, paste0(output_dir,"fit_summary_","new_scale","_",sp_ebird,".rds")
 
 
 trends_out <- NULL
+converge <- NULL
 
 #re_fit <- FALSE
 for(sp in owl_species$CommonName){
@@ -1186,7 +1188,14 @@ for(sp in owl_species$CommonName){
   
   fit2 <- readRDS(paste0(output_dir,"fit_","new_scale","_",sp_ebird,".rds"))
   summ2 <- readRDS(paste0(output_dir,"fit_summary_","new_scale","_",sp_ebird,".rds"))
+ 
   
+  summa <- summ2 %>% 
+    mutate(species = sp,
+           rhat_fail = ifelse(rhat > 1.05,TRUE,FALSE),
+           ess_fail = ifelse(ess_bulk < 100, TRUE, FALSE)) 
+  
+  converge <- bind_rows(converge,summa)
  
 # 
 # library(bayesplot)
@@ -1229,7 +1238,24 @@ for(sp in owl_species$CommonName){
 
 
 
-
+  
+  provs <- bbsBayes2::load_map("prov_state") %>% 
+    filter(country_code == "CA") %>% 
+    mutate(survey_region = ifelse(province_state %in% c("New Brunswick",
+                                                        "Nova Scotia",
+                                                        "Prince Edward Island"),
+                                  "Maritimes",
+                                  province_state)) %>% 
+    select(province_state,survey_region)
+  
+  alt_regs <- strata_used %>% 
+    st_join(provs,
+            left = TRUE,
+            largest = TRUE) %>% 
+    st_drop_geometry() %>% 
+    select(strata_name,survey_region)
+  
+  
 
 n_owls <- df_full %>% 
   mutate(Survey = ifelse(dataset == "bbs",
@@ -1352,23 +1378,6 @@ pal <- stats::setNames(c("#a50026", "#d73027", "#f46d43",
 # 
 
 
-provs <- bbsBayes2::load_map("prov_state") %>% 
-  filter(country_code == "CA") %>% 
-  mutate(survey_region = ifelse(province_state %in% c("New Brunswick",
-                                                      "Nova Scotia",
-                                                      "Prince Edward Island"),
-                                "Maritimes",
-                                province_state)) %>% 
-  select(province_state,survey_region)
-
-alt_regs <- strata_used %>% 
-  st_join(provs,
-          left = TRUE,
-          largest = TRUE) %>% 
-  st_drop_geometry() %>% 
-  select(strata_name,survey_region)
-  
-
 indices <- generate_indices(model_fit = fit2,
                            meta_strata = meta_strata, # df with columns strata, strata_name, and optional weights
                             meta_years = meta_years,
@@ -1389,14 +1398,12 @@ indices <- generate_indices(model_fit = fit2,
 
 tt_all <- NULL
 
-yrs <- data.frame(st_year = c(1995,
-                                1995,
-                                2005,
-                                2015,
-                                2011),
+yrs <- data.frame(st_year = c(2000,
+                                2000,
+                                2012,
+                                2014),
                   en_year = c(2024,
-                              2005,
-                              2015,
+                              2012,
                               2024,
                               2024))
 for(i in 1:nrow(yrs)){
@@ -1440,6 +1447,7 @@ t_map <- ggplot()+
   scale_fill_manual(values = pal, 
                     na.value = "white",
                     name = "Trend %/year")+
+  labs(title = paste(sp,"selected trends by strata with data"))+
   theme_bw()+
   facet_wrap(vars(trend_period))
 
@@ -1450,8 +1458,8 @@ print(t_map)
 
 tt_all <- NULL
 
-yrs <- data.frame(st_year = c(seq(1995,2023)),
-                  en_year = c(seq(1996,2024)))
+yrs <- data.frame(st_year = c(seq(2000,2023)),
+                  en_year = c(seq(2001,2024)))
 for(i in 1:nrow(yrs)){
   
   st_year <- yrs[i,"st_year"]
@@ -1493,6 +1501,7 @@ t_map <- ggplot()+
   scale_fill_manual(values = pal, 
                     na.value = "white",
                     name = "Trend %/year")+
+  labs(title = paste(sp,"annual trends by strata with data"))+
   theme_bw()+
   facet_wrap(vars(trend_period))
 
@@ -1560,7 +1569,7 @@ t_map_long <- ggplot()+
           aes(colour = Survey),
           inherit.aes = FALSE,
           size = 0.05)+
-  labs(title = paste(sp,"Trends across Canada, 1995-2024"),
+  labs(title = paste(sp,"Trends across Canada, 2000-2024"),
        subtitle = paste0(ns_o$n_sites," Nocturnal Owl Survey routes with ", ns_o$n_surveys, " surveys and species observed during ",ns_o$proportion_non_zero*100,"% \n",
                          ns_b$n_sites, " BBS routes with ",ns_b$n_surveys," surveys and species observed during ",ns_b$proportion_non_zero*100,"%"),
        caption = paste("Population trends from an integrated analysis of data from Nocturnal Owl Surveys and BBS\n",
@@ -1754,8 +1763,73 @@ ii_strat <- indices$indices %>%
                    "year")) %>% 
   left_join(yups,
             by = "region") %>% 
-  mutate(mean_prop_obs_plot = mean_prop_obs*yup)
+  mutate(mean_prop_obs_plot = mean_prop_obs*yup) %>% 
+  inner_join(alt_regs,by = c("region" = "strata_name"))
 
+nstrat <- nrow(yups)
+if(nstrat > 70){
+  
+  
+  ii_test <- ggplot(data = filter(ii_strat,
+                                  survey_region %in% c("Maritimes",
+                                                       "Quebec",
+                                                       "Ontario")),
+                    aes(x = year, y = index))+
+    geom_line()+
+    geom_ribbon(aes(ymin = index_q_0.025,
+                    ymax = index_q_0.975),
+                alpha = 0.2)+
+    #geom_point(aes(y = mean_prop_obs_plot))+
+    geom_point(aes(y = obs_mean, 
+                   colour = n_routes, 
+                   shape = datasources))+
+    scale_colour_viridis_b(breaks = c(1,2,3,5,10,16))+
+    facet_wrap(vars(region),
+               scales = "free_y")+
+    theme(legend.position = "bottom",
+          axis.text.x = element_text(angle = 90))+
+    labs(subtitle = paste(sp,"Strata-level trajectories for strata in",
+                          "Maritimes, ",
+                            "Quebec, ",
+                            "Ontario, "))
+  
+  
+  print(ii_test)
+  
+  
+  ii_test <- ggplot(data = filter(ii_strat,
+                                  survey_region %in% c("Manitoba","Northwest Territories",
+                                                       "Yukon",
+                                                       "Saskatchewan",
+                                                       "Alberta",
+                                                       "British Columbia")),
+                    aes(x = year, y = index))+
+    geom_line()+
+    geom_ribbon(aes(ymin = index_q_0.025,
+                    ymax = index_q_0.975),
+                alpha = 0.2)+
+    #geom_point(aes(y = mean_prop_obs_plot))+
+    geom_point(aes(y = obs_mean, 
+                   colour = n_routes, 
+                   shape = datasources))+
+    scale_colour_viridis_b(breaks = c(1,2,3,5,10,16))+
+    facet_wrap(vars(region),
+               scales = "free_y")+
+    theme(legend.position = "bottom",
+          axis.text.x = element_text(angle = 90))+
+    labs(subtitle = paste(sp,"Strata-level trajectories for strata in",
+                          "Manitoba","Northwest Territories",
+                          "Yukon",
+                          "Saskatchewan",
+                          "Alberta",
+                          "British Columbia"))
+  
+  
+  print(ii_test)
+  
+  
+  
+}else{
 ii_test <- ggplot(data = ii_strat,
                   aes(x = year, y = index))+
   geom_line()+
@@ -1763,14 +1837,19 @@ ii_test <- ggplot(data = ii_strat,
                   ymax = index_q_0.975),
               alpha = 0.2)+
   #geom_point(aes(y = mean_prop_obs_plot))+
-  geom_point(aes(y = obs_mean, colour = n_routes, shape = datasources))+
+  geom_point(aes(y = obs_mean, 
+                 colour = n_routes, 
+                 shape = datasources))+
   scale_colour_viridis_b(breaks = c(1,2,3,5,10,16))+
   facet_wrap(vars(region),
-             scales = "free_y")
+             scales = "free_y")+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90))+
+  labs(subtitle = paste(sp,"Strata-level trajectories"))
 
 
 print(ii_test)
-
+}
 
 indices_map <- strata_used %>% 
   inner_join(ii,
@@ -1914,6 +1993,15 @@ dev.off()
 
 
 write_csv(trends_out,"All_owl_trends.csv")
+write_csv(converge,"convergence_all_sp.csv")
+
+fail <- converge %>% 
+  filter(ess_fail | rhat_fail) %>% 
+  group_by(species) %>% 
+  summarise(n_fail = n())
+
+fail
+
 
 trends_out_broad <- trends_out %>% 
   filter(region_type != "strata_level")
