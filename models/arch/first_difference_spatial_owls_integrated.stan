@@ -1,18 +1,7 @@
-// This is a Stan implementation of the first difference model that shares information among strata on the annual differences
-// This is an elaboration of the model used in Link and Sauer
-// 
-
-// iCAR function, from Morris et al. 2019
-// Morris, M., K. Wheeler-Martin, D. Simpson, S. J. Mooney, A. Gelman, and C. DiMaggio (2019). 
-// Bayesian hierarchical spatial models: Implementing the Besag York Mollié model in stan. 
-// Spatial and Spatio-temporal Epidemiology 31:100301.
-
- functions {
-   real icar_normal_lpdf(vector bb, int ns, array[] int n1, array[] int n2) {
-     return -0.5 * dot_self(bb[n1] - bb[n2])
-       + normal_lpdf(sum(bb) | 0, 0.001 * ns); //soft sum to zero constraint on bb
-  }
- }
+// spatial first-difference model integrating across two surveys
+// relying on ebird relative abundance surface to scale observations
+// from different protocols, while sharing information among surveys
+// on the changes in population over time (years)
 
 
 
@@ -123,13 +112,13 @@ parameters {
   real OWL; // OWL intercept 
   real BBS; // BBS intercept 
  
-  vector[n_sites_bbs] ste_bbs_raw;   // site (route) effects
-  vector[n_sites_owl] ste_owl_raw;   // site (route) effects
+  sum_to_zero_vector[n_sites_bbs] ste_bbs_raw;   // site (route) effects
+  sum_to_zero_vector[n_sites_owl] ste_owl_raw;   // site (route) effects
 
   real<lower=0> sdste_bbs;    // sd of site (route) effects
   real<lower=0> sdste_owl;    // sd of site effects
 
-  vector[n_protocols] protocol_raw;   // protocol effects for owls
+  sum_to_zero_vector[n_protocols] protocol_raw;   // protocol effects for owls
   real<lower=0> sdprotocol;    // sd of overall protocol
 
   real<lower=0> sdnoise_bbs;    // sd of over-dispersion, if use_pois == 1
@@ -142,8 +131,9 @@ parameters {
   real<lower=0> sdBETA;    // sd of overall annual changes
 
   vector[n_years_m1] BETA_raw;//_hyperparameter of overall annual change values - "differences" between years 
-  matrix[n_strata,n_years_m1] beta_raw;         // strata level parameters
-  
+  //matrix[n_strata,n_years_m1] beta_raw;         // strata level parameters
+  array[n_years_m1] sum_to_zero_vector[n_strata] beta_raw; // strata level differences
+ 
 
    
 
@@ -153,7 +143,7 @@ transformed parameters {
   vector[n_train_bbs] E_bbs;           // log_scale additive likelihood
   vector[n_train_owl] E_owl;           // log_scale additive likelihood
 
-  matrix[n_strata,n_years] beta;         // strata-level mean differences (0-centered deviation from continental mean BETA)
+  matrix[n_strata,n_years_m1] beta;         // strata-level mean differences (0-centered deviation from continental mean BETA)
   matrix[n_strata,n_years] yeareffect;  // matrix of estimated annual values of trajectory
   vector[n_years_m1] BETA; // annual estimates of continental mean differences (n_years - 1, because middle year is fixed at 0)
   vector[n_years] YearEffect;
@@ -168,7 +158,7 @@ transformed parameters {
     phi_owl = 0;
   }else{
     phi_bbs = 1/sqrt(sdnoise_bbs); //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
-    ### The generic prior works much much better on the parameter you can use 1/sqrt(phi). This can be motivated by noticing you can write a negative binomial a y | g ~ Poisson(g*mu), g ~ gamma(phi,phi) and the standard deviation of g is 1/sqrt(phi). 
+    // The generic prior works much much better on the parameter you can use 1/sqrt(phi). This can be motivated by noticing you can write a negative binomial a y | g ~ Poisson(g*mu), g ~ gamma(phi,phi) and the standard deviation of g is 1/sqrt(phi). 
     phi_owl = 1/sqrt(sdnoise_owl); //as recommended to avoid prior that places most prior mass at very high overdispersion by https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
   }
   
@@ -183,7 +173,7 @@ transformed parameters {
 
 // first half of time-series - runs backwards from ebird_year
   for(t in yrev){
-    beta[,t] = (sdbeta[t] * beta_raw[,t]) + BETA[t];
+    beta[,t] = (sdbeta[t] * beta_raw[t,]) + BETA[t];
     yeareffect[,t] = yeareffect[,t+1] - beta[,t];
     YearEffect[t] = YearEffect[t+1] - BETA[t]; // hyperparameter trajectory interesting to monitor but no direct inference
   }
@@ -191,9 +181,9 @@ transformed parameters {
 if(n_years - ebird_year){ // only used if ebird_year is not equal to n_years, i.e., ebird_year != final year of the BBS data
 for(t in (ebird_year+1):n_years){
 
-    beta[,t] = (sdbeta[t] * beta_raw[,t-1]) + BETA[t-1];//t-1 indicators to match dimensionality
-    yeareffect[,t] = yeareffect[,t-1] + beta[,t];
-    YearEffect[t] = YearEffect[t-1] + BETA[t-1]; 
+    beta[,t-1] = (sdbeta[t-1] * beta_raw[t-2,]) + BETA[t-2];//t-1 indicators to match dimensionality
+    yeareffect[,t] = yeareffect[,t-1] + beta[,t-1];
+    YearEffect[t] = YearEffect[t-1] + BETA[t-2]; 
   }
 }
 
@@ -261,22 +251,24 @@ model {
 //  sdobs ~ normal(0,0.3); // informative prior on scale of observer effects - suggests observer variation larger than 3-4-fold differences is unlikely
   sdbeta ~ student_t(3,0,0.1); // prior on sd among strata in the yearly differences
   sdBETA ~ student_t(3,0,0.2); // prior on sd of mean hyperparameter time-series of range-wide mean
+  sdprotocol ~ student_t(3,0,0.2); // prior on sd of mean hyperparameter time-series of range-wide mean
+  
   BETA_raw ~ std_normal();// prior on fixed effect mean intercept
 
   // bbs
   sdste_bbs ~ student_t(3,0,1); //prior on sd of site effects
   ste_bbs_raw ~ std_normal();//site effects
-  sum(ste_bbs_raw) ~ normal(0,0.001*n_sites_bbs); //
+ // sum(ste_bbs_raw) ~ normal(0,0.001*n_sites_bbs); //
   BBS ~ std_normal();//bbs mean
   
   //owl 
   protocol_raw ~ std_normal();//site effects
-  sum(protocol_raw) ~ normal(0,0.001*n_protocols); // sum to zero constraint
+  //sum(protocol_raw) ~ normal(0,0.001*n_protocols); // sum to zero constraint
   
   OWL ~ std_normal();// prior on fixed effect mean of owl surveys
   sdste_owl ~ student_t(3,0,1); //prior on sd of site effects
   ste_owl_raw ~ std_normal();//site effects
-  sum(ste_owl_raw) ~ normal(0,0.001*n_sites_owl); //constraint 
+ // sum(ste_owl_raw) ~ normal(0,0.001*n_sites_owl); //constraint 
 
 
 
@@ -286,8 +278,9 @@ model {
 // fixed at zero in year of eBird abundance surface
 for(t in 1:(n_years_m1)){
    //   if(ebird_year-t){ // zero/false for the ebird year
- 
-    beta_raw[,t] ~ icar_normal(n_strata, node1, node2);
+  target += -0.5 * dot_self(beta_raw[t,node1] - beta_raw[t,node2]); // ICAR prior
+
+    // beta_raw[,t] ~ icar_normal(n_strata, node1, node2);
     // }else{
     //  beta_raw[,t] ~ normal(0,0.001); // arbitrarily small because this is the ebird year and these are not included in the likelihood
     // 

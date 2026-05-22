@@ -100,14 +100,14 @@ generate_trends <- function(indices,
         ~100 * ((.x^(1/(.env$max_year_num - .env$min_year_num))) - 1)),
       
       # Median and percentiles of trend per region
-      trend = purrr::map_dbl(.data$tr, stats::median),
+      trend = unlist(purrr::map(.data$tr, stats::median)),
       trend_q = purrr::map_df(
         .data$tr,
         ~stats::setNames(calc_quantiles(.x, quantiles, names = FALSE),
                          paste0("trend_q_", quantiles))),
       
       # Percent change and quantiles thereof per region
-      percent_change = purrr::map_dbl(.data$ch, ~100 * (stats::median(.x) - 1)),
+      percent_change = unlist(purrr::map(.data$ch, ~100 * (stats::median(.x) - 1))),
       pc_q = purrr::map_df(
         .data$ch, ~stats::setNames(
           100 * (calc_quantiles(.x, quantiles, names = FALSE) - 1),
